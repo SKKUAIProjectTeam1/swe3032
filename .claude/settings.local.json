@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wsl *)",
+      "Read(///wsl.localhost/Ubuntu-22.04/home/sean429/swe3032/**)",
+      "Read(///wsl.localhost/Ubuntu-22.04/home/sean429/swe3032/.claude/**)",
+      "Bash(python3 *)",
+      "Bash(bash *)"
+    ]
+  }
+}

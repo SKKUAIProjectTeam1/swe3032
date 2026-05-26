@@ -2,18 +2,27 @@
 campus_gnn.py
 건물 간 이동 그래프 위에서 다음 슬롯 체류 인원 예측.
 
+학습: 2025-1학기 synthetic augmented data (200 instances)
+테스트: 2025-2학기 실제 snapshot (cross-semester evaluation)
+
 비교:
   MLP  — 그래프 구조 무시, 각 건물 독립적으로 예측
   GCN  — 이웃 건물 정보를 집계해 예측
   GAT  — 이웃마다 attention weight 학습
 
-실행: python campus_gnn.py
+실행:
+  python campus_gnn.py
+  python campus_gnn.py --eval-day 목
 """
-import sys
+import sys, argparse
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 from torch_geometric.data import Data
 from torch_geometric.nn import GCNConv, GATConv
 
@@ -22,23 +31,24 @@ from campus_graph import BUILDINGS, EDGES
 from campus_synthetic import build_dataset, BUILDING_IDS
 
 # ── 하이퍼파라미터 ────────────────────────────────────────────────────────────
-N_INSTANCES  = 200
-HIDDEN       = 64
-EPOCHS       = 200
-LR           = 1e-3
-TRAIN_RATIO  = 0.8
-SNAPSHOT_PATH = '/home/sean429/swe3032/2025_1_snapshot.csv'
-DAY_ORDER    = ['월', '화', '수', '목', '금', '토']
+N_INSTANCES = 200
+HIDDEN      = 64
+EPOCHS      = 200
+LR          = 1e-3
+TRAIN_RATIO = 0.8
+SNAPSHOT_1  = '/home/sean429/swe3032/2025_1_snapshot.csv'
+SNAPSHOT_2  = '/home/sean429/swe3032/2025_2_snapshot.csv'
+OUT_CSV     = '/home/sean429/swe3032/2025_2_pred.csv'
+OUT_PLOT    = '/home/sean429/swe3032/campus_eval_{day}.png'
+DAY_ORDER   = ['월', '화', '수', '목', '금', '토']
 
 # ── 그래프 구조 (고정) ────────────────────────────────────────────────────────
-node_idx = {b: i for i, b in enumerate(BUILDING_IDS)}
-max_dist = max(dist for _, _, _, dist in EDGES)
-
+node_idx   = {b: i for i, b in enumerate(BUILDING_IDS)}
+max_dist   = max(dist for _, _, _, dist in EDGES)
 edge_index = torch.tensor(
     [[node_idx[s], node_idx[d]] for s, d, _, _ in EDGES], dtype=torch.long
 ).t().contiguous()
-
-edge_attr = torch.tensor(
+edge_attr  = torch.tensor(
     [[w, dist / max_dist] for _, _, w, dist in EDGES], dtype=torch.float
 )
 
@@ -49,54 +59,40 @@ def time_features(day: str, time: str) -> list:
     frac_h = (h * 60 + m) / (24 * 60)
     frac_d = DAY_ORDER.index(day) / len(DAY_ORDER) if day in DAY_ORDER else 0
     return [
-        np.sin(2 * np.pi * frac_h),
-        np.cos(2 * np.pi * frac_h),
-        np.sin(2 * np.pi * frac_d),
-        np.cos(2 * np.pi * frac_d),
+        np.sin(2 * np.pi * frac_h), np.cos(2 * np.pi * frac_h),
+        np.sin(2 * np.pi * frac_d), np.cos(2 * np.pi * frac_d),
     ]
 
 
-def build_samples(instances: list) -> list[Data]:
+def build_samples(instances: list, max_occ: float = None):
     """
     각 인스턴스 × 각 시간 전환(t→t+1) → PyG Data 리스트
     node feature: [occ_norm, sin_h, cos_h, sin_d, cos_d]  (5-dim)
     target:       occ_norm at t+1
-    """
-    samples = []
-    # 전체 max occupancy (정규화 기준)
-    all_occ = np.concatenate([
-        inst[BUILDING_IDS].values for inst in instances
-    ])
-    max_occ = all_occ.max() if all_occ.max() > 0 else 1.0
 
+    max_occ: 외부 지정 시 사용 — cross-semester 테스트 시 학습 기준으로 고정
+    """
+    all_occ = np.concatenate([inst[BUILDING_IDS].values for inst in instances])
+    if max_occ is None:
+        max_occ = float(all_occ.max()) if all_occ.max() > 0 else 1.0
+
+    samples = []
     for inst in instances:
         rows = inst.reset_index(drop=True)
         for i in range(len(rows) - 1):
-            r_t   = rows.iloc[i]
-            r_t1  = rows.iloc[i + 1]
-
-            # 같은 요일 내 전환만 사용
+            r_t, r_t1 = rows.iloc[i], rows.iloc[i + 1]
             if r_t['요일'] != r_t1['요일']:
                 continue
-
             tf = time_features(r_t['요일'], r_t['시각'])
-            x  = torch.tensor(
-                [[r_t[b] / max_occ] + tf for b in BUILDING_IDS],
-                dtype=torch.float
-            )
-            y  = torch.tensor(
-                [r_t1[b] / max_occ for b in BUILDING_IDS],
-                dtype=torch.float
-            )
-            samples.append(Data(
-                x=x, edge_index=edge_index, edge_attr=edge_attr, y=y
-            ))
+            x  = torch.tensor([[r_t[b] / max_occ] + tf for b in BUILDING_IDS], dtype=torch.float)
+            y  = torch.tensor([r_t1[b] / max_occ for b in BUILDING_IDS], dtype=torch.float)
+            samples.append(Data(x=x, edge_index=edge_index, edge_attr=edge_attr, y=y))
 
     return samples, max_occ
 
 
 # ── 모델 정의 ─────────────────────────────────────────────────────────────────
-IN_DIM = 5   # occ + 4 time features
+IN_DIM = 5   # occ_norm + 4 time features
 
 class MLP(nn.Module):
     """그래프 구조 무시 — 각 노드 독립 예측"""
@@ -114,10 +110,9 @@ class MLP(nn.Module):
 class GCN(nn.Module):
     def __init__(self):
         super().__init__()
-        self.conv1 = GCNConv(IN_DIM,  HIDDEN)
-        self.conv2 = GCNConv(HIDDEN,  HIDDEN)
+        self.conv1 = GCNConv(IN_DIM, HIDDEN)
+        self.conv2 = GCNConv(HIDDEN, HIDDEN)
         self.head  = nn.Linear(HIDDEN, 1)
-
     def forward(self, data):
         x = F.relu(self.conv1(data.x, data.edge_index))
         x = F.relu(self.conv2(x,      data.edge_index))
@@ -127,10 +122,9 @@ class GCN(nn.Module):
 class GAT(nn.Module):
     def __init__(self, heads=4):
         super().__init__()
-        self.conv1 = GATConv(IN_DIM,        HIDDEN // heads, heads=heads)
-        self.conv2 = GATConv(HIDDEN,        HIDDEN,          heads=1)
+        self.conv1 = GATConv(IN_DIM,   HIDDEN // heads, heads=heads)
+        self.conv2 = GATConv(HIDDEN,   HIDDEN,          heads=1)
         self.head  = nn.Linear(HIDDEN, 1)
-
     def forward(self, data):
         x = F.elu(self.conv1(data.x, data.edge_index))
         x = F.elu(self.conv2(x,      data.edge_index))
@@ -138,72 +132,190 @@ class GAT(nn.Module):
 
 
 # ── 학습 / 평가 ───────────────────────────────────────────────────────────────
-def train_model(model, train_data, test_data, epochs=EPOCHS):
+def train_model(model, train_data, val_data, epochs=EPOCHS):
     opt = torch.optim.Adam(model.parameters(), lr=LR)
-    train_losses, test_maes = [], []
-
     for epoch in range(1, epochs + 1):
         model.train()
-        total_loss = 0
+        total = 0.0
         for data in train_data:
             opt.zero_grad()
-            pred = model(data)
-            loss = F.mse_loss(pred, data.y)
+            loss = F.mse_loss(model(data), data.y)
             loss.backward()
             opt.step()
-            total_loss += loss.item()
-        train_losses.append(total_loss / len(train_data))
-
-        if epoch % 20 == 0:
-            mae = evaluate(model, test_data)
-            test_maes.append((epoch, mae))
-            print(f'  epoch {epoch:3d} | train MSE {train_losses[-1]:.5f} | test MAE {mae:.4f}')
-
-    return train_losses, test_maes
+            total += loss.item()
+        if epoch % 40 == 0:
+            mae = evaluate(model, val_data)
+            print(f'    epoch {epoch:3d} | train MSE {total/len(train_data):.5f} | val MAE {mae:.4f}')
 
 
 def evaluate(model, data_list):
     model.eval()
-    total_mae = 0
+    total = 0.0
     with torch.no_grad():
         for data in data_list:
-            pred = model(data)
-            total_mae += F.l1_loss(pred, data.y).item()
-    return total_mae / len(data_list)
+            total += F.l1_loss(model(data), data.y).item()
+    return total / len(data_list)
+
+
+def predict_all_slots(models: dict, df: pd.DataFrame, max_occ: float) -> pd.DataFrame:
+    """
+    모든 모델로 2학기 snapshot 각 시간 전환(t→t+1) 예측.
+    반환: (요일, 시각, building, actual, pred_MLP, pred_GCN, pred_GAT)
+    """
+    for m in models.values():
+        m.eval()
+
+    records = []
+    with torch.no_grad():
+        for day, day_df in df.groupby('요일', sort=False):
+            day_df = day_df.reset_index(drop=True)
+            for i in range(len(day_df) - 1):
+                r_t, r_t1 = day_df.iloc[i], day_df.iloc[i + 1]
+                tf   = time_features(str(r_t['요일']), str(r_t['시각']))
+                x    = torch.tensor(
+                    [[r_t[b] / max_occ] + tf for b in BUILDING_IDS], dtype=torch.float
+                )
+                data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
+                preds = {name: model(data).numpy() for name, model in models.items()}
+
+                for j, b in enumerate(BUILDING_IDS):
+                    row = {'요일': day, '시각': r_t1['시각'], 'building': b,
+                           'actual': float(r_t1[b])}
+                    for name, p in preds.items():
+                        row[f'pred_{name}'] = max(0.0, float(p[j]) * max_occ)
+                    records.append(row)
+
+    return pd.DataFrame(records)
+
+
+# ── 시각화 ────────────────────────────────────────────────────────────────────
+_BLDG_LABEL = {b: BUILDINGS[b]['name'] for b in BUILDING_IDS}
+_DAY_EN     = {'월': 'Mon', '화': 'Tue', '수': 'Wed', '목': 'Thu', '금': 'Fri', '토': 'Sat'}
+
+
+def plot_comparison(df_comp: pd.DataFrame, day: str, out_path: str):
+    """선택 요일의 건물별 actual vs MLP/GCN/GAT 시계열 플롯"""
+    sub = df_comp[df_comp['요일'] == day]
+    if sub.empty:
+        print(f'[WARN] {day}요일 데이터 없음 — 플롯 스킵')
+        return
+
+    MODEL_STYLE = {
+        'MLP': dict(color='#3498db', ls='--', marker='s', lw=1.5, ms=3),
+        'GCN': dict(color='#e67e22', ls='--', marker='^', lw=1.5, ms=3),
+        'GAT': dict(color='#e74c3c', ls='-',  marker='o', lw=2.0, ms=4),
+    }
+
+    n_cols = 4
+    n_rows = (len(BUILDING_IDS) + n_cols - 1) // n_cols
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 4 * n_rows))
+    axes = axes.flatten()
+
+    for idx, b in enumerate(BUILDING_IDS):
+        ax   = axes[idx]
+        bsub = sub[sub['building'] == b].sort_values('시각')
+
+        if bsub.empty or bsub['actual'].max() == 0:
+            ax.text(0.5, 0.5, '수업 없음', ha='center', va='center',
+                    transform=ax.transAxes, fontsize=11, color='#888')
+            ax.set_title(f'{b}동  {_BLDG_LABEL[b]}', fontsize=10)
+            ax.axis('off')
+            continue
+
+        times = bsub['시각'].values
+        x_pos = np.arange(len(times))
+
+        ax.fill_between(x_pos, bsub['actual'].values, alpha=0.12, color='black')
+        ax.plot(x_pos, bsub['actual'].values, 'k-o', lw=2, ms=5, label='Actual', zorder=5)
+
+        for name, style in MODEL_STYLE.items():
+            col = f'pred_{name}'
+            if col in bsub.columns:
+                ax.plot(x_pos, bsub[col].values, label=name, zorder=4, **style)
+
+        tick_step = max(1, len(times) // 6)
+        ax.set_xticks(x_pos[::tick_step])
+        ax.set_xticklabels(times[::tick_step], rotation=45, fontsize=7)
+        ax.set_ylabel('명', fontsize=8)
+        ax.set_title(f'{b}동  {_BLDG_LABEL[b]}\n(peak {bsub["actual"].max():.0f}명)', fontsize=9)
+        ax.legend(fontsize=7, loc='upper right', framealpha=0.7)
+        ax.grid(alpha=0.3)
+        ax.set_xlim(-0.5, len(times) - 0.5)
+        ax.set_ylim(bottom=0)
+
+    for ax in axes[len(BUILDING_IDS):]:
+        ax.axis('off')
+
+    day_str = _DAY_EN.get(day, day)
+    fig.suptitle(
+        f'2025-2 {day_str} ({day}요일) — 건물별 혼잡도: 예측 vs 실제\n'
+        f'학습: 2025-1학기 synthetic  |  테스트: 2025-2학기 실제',
+        fontsize=13, fontweight='bold', y=1.01
+    )
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=120, bbox_inches='tight')
+    plt.close()
+    print(f'Saved: {out_path}')
 
 
 # ── 메인 ─────────────────────────────────────────────────────────────────────
 if __name__ == '__main__':
-    print('▶ Synthetic 데이터 생성 중...')
-    instances = build_dataset(SNAPSHOT_PATH, n_instances=N_INSTANCES)
-    samples, max_occ = build_samples(instances)
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--eval-day', default='화', help='시각화할 요일 (default: 화)')
+    args = parser.parse_args()
 
+    # ── 1. 학습 데이터: 1학기 synthetic augmentation
+    print('▶ 1학기 Synthetic 데이터 생성 중...')
+    instances = build_dataset(SNAPSHOT_1, n_instances=N_INSTANCES)
+    samples, max_occ = build_samples(instances)
     np.random.shuffle(samples)
     split      = int(len(samples) * TRAIN_RATIO)
     train_data = samples[:split]
-    test_data  = samples[split:]
-    print(f'  총 {len(samples)}개 샘플 | train {len(train_data)} / test {len(test_data)}')
-    print(f'  max_occ = {max_occ:.0f}명\n')
+    val_data   = samples[split:]
+    print(f'  샘플: train {len(train_data)} / val {len(val_data)} | max_occ = {max_occ:.0f}명\n')
 
-    results = {}
+    # ── 2. 테스트 데이터: 2학기 실제 snapshot (노이즈 없음)
+    df2          = pd.read_csv(SNAPSHOT_2)
+    test_samples, _ = build_samples([df2], max_occ=max_occ)
+    print(f'  2학기 실제 test 샘플: {len(test_samples)}개\n')
+
+    # ── 3. 모델 학습 + 평가
+    trained_models               = {}
+    val_results, test_results    = {}, {}
+
     for name, model in [('MLP', MLP()), ('GCN', GCN()), ('GAT', GAT())]:
         print(f'▶ {name} 학습 중...')
-        _, test_maes = train_model(model, train_data, test_data)
-        final_mae = evaluate(model, test_data)
-        results[name] = final_mae * max_occ   # 실제 인원 단위로 환산
-        print(f'  → 최종 test MAE: {results[name]:.1f}명\n')
+        train_model(model, train_data, val_data)
+        val_mae  = evaluate(model, val_data)    * max_occ
+        test_mae = evaluate(model, test_samples) * max_occ
+        val_results[name]     = val_mae
+        test_results[name]    = test_mae
+        trained_models[name]  = model
+        print(f'  val  MAE (1학기 synthetic) : {val_mae:.1f}명')
+        print(f'  test MAE (2학기 실제)      : {test_mae:.1f}명\n')
 
-    print('=' * 40)
-    print('모델별 최종 test MAE (명)')
-    for name, mae in results.items():
-        bar = '█' * int(mae / 5)
-        print(f'  {name:4s}: {mae:6.1f}명  {bar}')
-    print('=' * 40)
+    # ── 4. 결과 요약
+    print('=' * 52)
+    print(f'{"모델":<5} {"1학기 val MAE":>17} {"2학기 test MAE":>17}')
+    print('-' * 52)
+    for name in ('MLP', 'GCN', 'GAT'):
+        print(f'{name:<5} {val_results[name]:>15.1f}명 {test_results[name]:>15.1f}명')
+    print('=' * 52)
 
-    best = min(results, key=results.get)
-    print(f'\n최고 성능: {best}  (MAE {results[best]:.1f}명)')
-    if results['GCN'] < results['MLP']:
-        diff = results['MLP'] - results['GCN']
-        print(f'GCN이 MLP보다 {diff:.1f}명 더 정확 → 그래프 구조가 도움됨')
+    best = min(test_results, key=test_results.get)
+    print(f'\n2학기 최고 성능: {best}  (MAE {test_results[best]:.1f}명)')
+    if test_results['GAT'] < test_results['MLP']:
+        diff = test_results['MLP'] - test_results['GAT']
+        print(f'GAT가 MLP보다 {diff:.1f}명 더 정확 → 그래프 구조가 cross-semester 일반화에 기여')
     else:
-        print('(그래프 구조 효과 미미 — 노이즈 파라미터 조정 필요)')
+        print('(그래프 구조 효과 미미 — 노이즈 파라미터 또는 아키텍처 재검토 필요)')
+
+    # ── 5. 슬롯별 예측값 CSV 저장
+    print('\n▶ 2학기 슬롯별 예측값 생성 중...')
+    df_comp = predict_all_slots(trained_models, df2, max_occ)
+    df_comp.to_csv(OUT_CSV, index=False, encoding='utf-8-sig')
+    print(f'  Saved: {OUT_CSV}  ({len(df_comp)}행)')
+
+    # ── 6. 시각화
+    out_plot = OUT_PLOT.format(day=args.eval_day)
+    plot_comparison(df_comp, args.eval_day, out_plot)

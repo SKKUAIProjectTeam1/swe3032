@@ -38,11 +38,11 @@ HIDDEN      = 64
 EPOCHS      = 200
 LR          = 1e-3
 TRAIN_RATIO = 0.8
-SNAPSHOT_1  = '/home/sean429/swe3032/2025_1_snapshot.csv'
-SNAPSHOT_VAL = '/home/sean429/swe3032/2024_1_snapshot.csv'
-SNAPSHOT_2  = '/home/sean429/swe3032/2025_2_snapshot.csv'
-OUT_CSV     = '/home/sean429/swe3032/2025_2_pred.csv'
-OUT_PLOT    = '/home/sean429/swe3032/campus_eval_{day}.png'
+SNAPSHOT_TRAIN = '/home/sean429/swe3032/2024_2_snapshot.csv'
+SNAPSHOT_VAL   = '/home/sean429/swe3032/2024_2_snapshot.csv'
+SNAPSHOT_TEST  = '/home/sean429/swe3032/2025_2_snapshot.csv'
+OUT_CSV        = '/home/sean429/swe3032/2025_2_pred.csv'
+OUT_PLOT       = '/home/sean429/swe3032/campus_eval_{day}.png'
 DAY_ORDER   = ['월', '화', '수', '목', '금', '토']
 
 # ── 디바이스 ──────────────────────────────────────────────────────────────────
@@ -276,22 +276,22 @@ if __name__ == '__main__':
     parser.add_argument('--eval-day', default='화', help='시각화할 요일 (default: 화)')
     args = parser.parse_args()
 
-    # ── 1. 학습 데이터: 2025-1학기 synthetic augmentation (전부 train)
-    print('▶ 2025-1 Synthetic 데이터 생성 중...')
-    instances = build_dataset(SNAPSHOT_1, n_instances=N_INSTANCES)
+    # ── 1. 학습 데이터: 2024-1학기 synthetic augmentation (전부 train)
+    print('▶ 2024-2 Synthetic 데이터 생성 중...')
+    instances = build_dataset(SNAPSHOT_TRAIN, n_instances=N_INSTANCES)
     train_data, max_occ = build_samples(instances)
     np.random.shuffle(train_data)
     print(f'  train 샘플: {len(train_data)} | max_occ = {max_occ:.0f}명\n')
 
-    # ── 2. val: 2024-1 실제 snapshot (같은 1학기, 다른 연도 → 진짜 held-out)
+    # ── 2. val: 2024-1 실제 snapshot (synthetic 학습 결과 검증)
     df_val      = pd.read_csv(SNAPSHOT_VAL)
     val_data, _ = build_samples([df_val], max_occ=max_occ)
     print(f'  2024-1 실제 val 샘플: {len(val_data)}개')
 
-    # ── 3. test: 2025-2 실제 snapshot (cross-semester ground truth)
-    df2             = pd.read_csv(SNAPSHOT_2)
-    test_samples, _ = build_samples([df2], max_occ=max_occ)
-    print(f'  2025-2 실제 test 샘플: {len(test_samples)}개\n')
+    # ── 3. test: 2025-1 실제 snapshot (내년 동일 학기 예측 — cross-year)
+    df_test         = pd.read_csv(SNAPSHOT_TEST)
+    test_samples, _ = build_samples([df_test], max_occ=max_occ)
+    print(f'  2025-1 실제 test 샘플: {len(test_samples)}개\n')
 
     # ── 3. 모델 학습 + 평가
     trained_models               = {}
@@ -306,12 +306,12 @@ if __name__ == '__main__':
         val_results[name]     = val_mae
         test_results[name]    = test_mae
         trained_models[name]  = model
-        print(f'  val  MAE (2024-1 실제) : {val_mae:.1f}명')
+        print(f'  val  MAE (2024-2 실제) : {val_mae:.1f}명')
         print(f'  test MAE (2025-2 실제) : {test_mae:.1f}명\n')
 
     # ── 4. 결과 요약
     print('=' * 52)
-    print(f'{"모델":<5} {"2024-1 val MAE":>17} {"2025-2 test MAE":>18}')
+    print(f'{"모델":<5} {"2024-2 val MAE":>17} {"2025-2 test MAE":>18}')
     print('-' * 52)
     for name in ('MLP', 'GCN', 'GAT'):
         print(f'{name:<5} {val_results[name]:>15.1f}명 {test_results[name]:>15.1f}명')
@@ -326,8 +326,8 @@ if __name__ == '__main__':
         print('(그래프 구조 효과 미미 — 노이즈 파라미터 또는 아키텍처 재검토 필요)')
 
     # ── 5. 슬롯별 예측값 CSV 저장
-    print('\n▶ 2학기 슬롯별 예측값 생성 중...')
-    df_comp = predict_all_slots(trained_models, df2, max_occ)
+    print('\n▶ 2025-2 슬롯별 예측값 생성 중...')
+    df_comp = predict_all_slots(trained_models, df_test, max_occ)
     df_comp.to_csv(OUT_CSV, index=False, encoding='utf-8-sig')
     print(f'  Saved: {OUT_CSV}  ({len(df_comp)}행)')
 

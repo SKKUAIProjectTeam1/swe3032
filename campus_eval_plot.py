@@ -23,8 +23,9 @@ BUILDING_IDS = list(BUILDINGS.keys())
 _BLDG_LABEL  = {b: BUILDINGS[b]['name'] for b in BUILDING_IDS}
 _DAY_EN      = {'월': 'Mon', '화': 'Tue', '수': 'Wed', '목': 'Thu', '금': 'Fri', '토': 'Sat'}
 
-PRED_CSV  = '/home/sean429/swe3032/2025_2_pred.csv'
-OUT_PLOT  = '/home/sean429/swe3032/campus_eval_{day}.png'
+PRED_CSV_1  = '/home/sean429/swe3032/2025_1_pred.csv'
+PRED_CSV_2  = '/home/sean429/swe3032/2025_2_pred.csv'
+OUT_PLOT    = '/home/sean429/swe3032/campus_eval_{semester}_{day}.png'
 
 MODEL_STYLE = {
     'MLP': dict(color='#3498db', ls='--', marker='s', lw=1.8, ms=4),
@@ -40,7 +41,7 @@ def setup_korean_font():
     return True
 
 
-def plot_day(df_comp: pd.DataFrame, day: str, out_path: str, use_korean: bool):
+def plot_day(df_comp: pd.DataFrame, day: str, out_path: str, use_korean: bool, semester: str = '2025-2'):
     sub = df_comp[df_comp['요일'] == day]
     if sub.empty:
         print(f'[SKIP] {day} 데이터 없음')
@@ -94,9 +95,11 @@ def plot_day(df_comp: pd.DataFrame, day: str, out_path: str, use_korean: bool):
     day_en  = _DAY_EN.get(day, day)
     day_str = f'{day}요일 ({day_en})' if use_korean else day_en
 
+    year, sem = semester.split('-')
+    prev_year = str(int(year) - 1)
     fig.suptitle(
-        f'2025-2  {day_str}  —  Building Congestion: Predicted vs Actual\n'
-        f'Train: 2025-1 synthetic  |  Test: 2025-2 ground truth',
+        f'{semester}  {day_str}  —  Building Congestion: Predicted vs Actual\n'
+        f'Train: {prev_year}-{sem} synthetic  |  Test: {semester} ground truth',
         fontsize=13, fontweight='bold', y=1.01
     )
     plt.tight_layout()
@@ -108,18 +111,24 @@ def plot_day(df_comp: pd.DataFrame, day: str, out_path: str, use_korean: bool):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--day', default=None, help='요일 (미지정 시 전체)')
+    parser.add_argument('--semester', default=None, help='학기 예: 2025-1 또는 2025-2 (미지정 시 둘 다)')
     args = parser.parse_args()
 
     use_korean = setup_korean_font()
 
-    df = pd.read_csv(PRED_CSV)
-    df['building'] = df['building'].astype(str)
-    days = [args.day] if args.day else sorted(df['요일'].unique(),
-            key=lambda d: ['월','화','수','목','금','토'].index(d) if d in ['월','화','수','목','금','토'] else 9)
+    DAY_ORDER = ['월', '화', '수', '목', '금', '토']
+    semesters = [args.semester] if args.semester else ['2025-1', '2025-2']
+    csv_map   = {'2025-1': PRED_CSV_1, '2025-2': PRED_CSV_2}
 
-    for day in days:
-        out = OUT_PLOT.format(day=day)
-        plot_day(df, day, out, use_korean)
+    for sem in semesters:
+        csv_path = csv_map[sem]
+        df = pd.read_csv(csv_path)
+        df['building'] = df['building'].astype(str)
+        days = [args.day] if args.day else sorted(
+            df['요일'].unique(), key=lambda d: DAY_ORDER.index(d) if d in DAY_ORDER else 9)
+        for day in days:
+            out = OUT_PLOT.format(semester=sem.replace('-', '_'), day=day)
+            plot_day(df, day, out, use_korean, semester=sem)
 
 
 if __name__ == '__main__':

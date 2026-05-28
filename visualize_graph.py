@@ -9,8 +9,8 @@ from campus_graph import BUILDINGS, EDGES
 
 ENG_NAMES = {
     '21': 'ICT College', '22': 'Eng.Bldg-1', '23': 'Eng.College',
-    '26': 'Eng.Bldg-2\n(cluster gate)', '33': 'Pharmacy',
-    '40': 'Handok', '85': 'Cooperation\nCenter',
+    '26': 'Eng.Bldg-2\n(cluster gate)', '33': 'Chem.Bldg',
+    '40': 'Semicond.', '85': 'Cooperation\nCenter',
 }
 
 G = nx.DiGraph()
@@ -25,20 +25,23 @@ ax.set_facecolor('#f0f4f8')
 fig.patch.set_facecolor('#f0f4f8')
 
 # cluster backgrounds
-ax.add_patch(plt.Polygon([(148,-325),(265,-325),(265,-148),(148,-148)],
+# Hub cluster: 21(105,-245) / 22(210,-220) / 23(110,-165) — all branch from 22동
+ax.add_patch(plt.Polygon([(55,-280),(265,-280),(265,-130),(55,-130)],
     closed=True, fill=True, facecolor='#cce5ff', edgecolor='#4a90d9', lw=1.5, alpha=0.35, zorder=0))
-ax.add_patch(plt.Polygon([(148,-125),(265,-125),(265,-68),(148,-68)],
+# 25/26/27 cluster: 26(220,-100) is the gate
+ax.add_patch(plt.Polygon([(160,-125),(275,-125),(275,-55),(160,-55)],
     closed=True, fill=True, facecolor='#d4edda', edgecolor='#28a745', lw=1.5, alpha=0.35, zorder=0))
-ax.add_patch(plt.Polygon([(148,-455),(295,-455),(295,-535),(148,-535)],
+# Complex 33/40: 33(185,-430) / 40(250,-455)
+ax.add_patch(plt.Polygon([(140,-400),(300,-400),(300,-490),(140,-490)],
     closed=True, fill=True, facecolor='#f8d7da', edgecolor='#c0392b', lw=1.5, alpha=0.35, zorder=0))
-ax.text(204, -140, 'Cluster 21/22/23', ha='center', fontsize=8.5, color='#1a6bb5', fontweight='bold')
-ax.text(204,  -60, 'Cluster 25/26/27', ha='center', fontsize=8.5, color='#155724', fontweight='bold')
-ax.text(221, -448, 'Complex 33/40',    ha='center', fontsize=8.5, color='#922b21', fontweight='bold')
+ax.text(160, -270, 'Hub Cluster 21/22/23', ha='center', fontsize=8.5, color='#1a6bb5', fontweight='bold')
+ax.text(218,  -65, 'Cluster 25/26/27',     ha='center', fontsize=8.5, color='#155724', fontweight='bold')
+ax.text(220, -480, 'Complex 33/40',         ha='center', fontsize=8.5, color='#922b21', fontweight='bold')
 
-# parking lot
-ax.add_patch(mpatches.FancyBboxPatch((148, -450), 112, 80, boxstyle='round,pad=3',
+# parking lot 3 (22↔33 경유지)
+ax.add_patch(mpatches.FancyBboxPatch((148, -395), 112, 90, boxstyle='round,pad=3',
     fill=True, facecolor='#e0e0e0', edgecolor='#999', lw=1, alpha=0.7, zorder=0))
-ax.text(204, -400, '[Parking Lot]', ha='center', fontsize=8, color='#777', style='italic')
+ax.text(204, -345, '[Parking Lot 3]', ha='center', fontsize=8, color='#777', style='italic')
 
 # edges
 drawn = set()
@@ -79,7 +82,7 @@ legend = [
     mpatches.Patch(color='#F57C00', label='23  Eng.College  (main entry)'),
     mpatches.Patch(color='#EF6C00', label='22  Eng.Bldg-1  (hub)'),
     mpatches.Patch(color='#E65100', label='21  ICT College'),
-    mpatches.Patch(color='#6A1B9A', label='33/40  Complex  (S of parking)'),
+    mpatches.Patch(color='#6A1B9A', label='33/40  Chem./Semicond.  (S of parking)'),
     mpatches.Patch(color='#1565C0', label='Main path  (w >= 0.5)'),
     mpatches.Patch(color='#64B5F6', label='Secondary  (w < 0.5)'),
 ]

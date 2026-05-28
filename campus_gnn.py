@@ -23,7 +23,9 @@ import torch.nn.functional as F
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+import koreanize_matplotlib
 from torch_geometric.data import Data
+from torch_geometric.loader import DataLoader
 from torch_geometric.nn import GCNConv, GATConv
 
 sys.path.insert(0, '/home/sean429/swe3032')
@@ -37,20 +39,25 @@ EPOCHS      = 200
 LR          = 1e-3
 TRAIN_RATIO = 0.8
 SNAPSHOT_1  = '/home/sean429/swe3032/2025_1_snapshot.csv'
+SNAPSHOT_VAL = '/home/sean429/swe3032/2024_1_snapshot.csv'
 SNAPSHOT_2  = '/home/sean429/swe3032/2025_2_snapshot.csv'
 OUT_CSV     = '/home/sean429/swe3032/2025_2_pred.csv'
 OUT_PLOT    = '/home/sean429/swe3032/campus_eval_{day}.png'
 DAY_ORDER   = ['월', '화', '수', '목', '금', '토']
+
+# ── 디바이스 ──────────────────────────────────────────────────────────────────
+DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print(f'[device] {DEVICE}')
 
 # ── 그래프 구조 (고정) ────────────────────────────────────────────────────────
 node_idx   = {b: i for i, b in enumerate(BUILDING_IDS)}
 max_dist   = max(dist for _, _, _, dist in EDGES)
 edge_index = torch.tensor(
     [[node_idx[s], node_idx[d]] for s, d, _, _ in EDGES], dtype=torch.long
-).t().contiguous()
+).t().contiguous().to(DEVICE)
 edge_attr  = torch.tensor(
     [[w, dist / max_dist] for _, _, w, dist in EDGES], dtype=torch.float
-)
+).to(DEVICE)
 
 
 def time_features(day: str, time: str) -> list:
@@ -86,7 +93,7 @@ def build_samples(instances: list, max_occ: float = None):
             tf = time_features(r_t['요일'], r_t['시각'])
             x  = torch.tensor([[r_t[b] / max_occ] + tf for b in BUILDING_IDS], dtype=torch.float)
             y  = torch.tensor([r_t1[b] / max_occ for b in BUILDING_IDS], dtype=torch.float)
-            samples.append(Data(x=x, edge_index=edge_index, edge_attr=edge_attr, y=y))
+            samples.append(Data(x=x, edge_index=edge_index, edge_attr=edge_attr, y=y).to(DEVICE))
 
     return samples, max_occ
 
@@ -132,29 +139,34 @@ class GAT(nn.Module):
 
 
 # ── 학습 / 평가 ───────────────────────────────────────────────────────────────
+BATCH_SIZE = 256
+
 def train_model(model, train_data, val_data, epochs=EPOCHS):
-    opt = torch.optim.Adam(model.parameters(), lr=LR)
+    loader = DataLoader(train_data, batch_size=BATCH_SIZE, shuffle=True)
+    opt    = torch.optim.Adam(model.parameters(), lr=LR)
     for epoch in range(1, epochs + 1):
         model.train()
         total = 0.0
-        for data in train_data:
+        for batch in loader:
             opt.zero_grad()
-            loss = F.mse_loss(model(data), data.y)
+            loss = F.mse_loss(model(batch), batch.y)
             loss.backward()
             opt.step()
             total += loss.item()
         if epoch % 40 == 0:
             mae = evaluate(model, val_data)
-            print(f'    epoch {epoch:3d} | train MSE {total/len(train_data):.5f} | val MAE {mae:.4f}')
+            print(f'    epoch {epoch:3d} | train MSE {total/len(loader):.5f} | val MAE {mae:.4f}')
 
 
 def evaluate(model, data_list):
     model.eval()
-    total = 0.0
+    loader = DataLoader(data_list, batch_size=BATCH_SIZE, shuffle=False)
+    total, n = 0.0, 0
     with torch.no_grad():
-        for data in data_list:
-            total += F.l1_loss(model(data), data.y).item()
-    return total / len(data_list)
+        for batch in loader:
+            total += F.l1_loss(model(batch), batch.y).item() * batch.num_graphs
+            n     += batch.num_graphs
+    return total / n
 
 
 def predict_all_slots(models: dict, df: pd.DataFrame, max_occ: float) -> pd.DataFrame:
@@ -175,8 +187,8 @@ def predict_all_slots(models: dict, df: pd.DataFrame, max_occ: float) -> pd.Data
                 x    = torch.tensor(
                     [[r_t[b] / max_occ] + tf for b in BUILDING_IDS], dtype=torch.float
                 )
-                data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
-                preds = {name: model(data).numpy() for name, model in models.items()}
+                data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr).to(DEVICE)
+                preds = {name: model(data).cpu().numpy() for name, model in models.items()}
 
                 for j, b in enumerate(BUILDING_IDS):
                     row = {'요일': day, '시각': r_t1['시각'], 'building': b,
@@ -264,26 +276,29 @@ if __name__ == '__main__':
     parser.add_argument('--eval-day', default='화', help='시각화할 요일 (default: 화)')
     args = parser.parse_args()
 
-    # ── 1. 학습 데이터: 1학기 synthetic augmentation
-    print('▶ 1학기 Synthetic 데이터 생성 중...')
+    # ── 1. 학습 데이터: 2025-1학기 synthetic augmentation (전부 train)
+    print('▶ 2025-1 Synthetic 데이터 생성 중...')
     instances = build_dataset(SNAPSHOT_1, n_instances=N_INSTANCES)
-    samples, max_occ = build_samples(instances)
-    np.random.shuffle(samples)
-    split      = int(len(samples) * TRAIN_RATIO)
-    train_data = samples[:split]
-    val_data   = samples[split:]
-    print(f'  샘플: train {len(train_data)} / val {len(val_data)} | max_occ = {max_occ:.0f}명\n')
+    train_data, max_occ = build_samples(instances)
+    np.random.shuffle(train_data)
+    print(f'  train 샘플: {len(train_data)} | max_occ = {max_occ:.0f}명\n')
 
-    # ── 2. 테스트 데이터: 2학기 실제 snapshot (노이즈 없음)
-    df2          = pd.read_csv(SNAPSHOT_2)
+    # ── 2. val: 2024-1 실제 snapshot (같은 1학기, 다른 연도 → 진짜 held-out)
+    df_val      = pd.read_csv(SNAPSHOT_VAL)
+    val_data, _ = build_samples([df_val], max_occ=max_occ)
+    print(f'  2024-1 실제 val 샘플: {len(val_data)}개')
+
+    # ── 3. test: 2025-2 실제 snapshot (cross-semester ground truth)
+    df2             = pd.read_csv(SNAPSHOT_2)
     test_samples, _ = build_samples([df2], max_occ=max_occ)
-    print(f'  2학기 실제 test 샘플: {len(test_samples)}개\n')
+    print(f'  2025-2 실제 test 샘플: {len(test_samples)}개\n')
 
     # ── 3. 모델 학습 + 평가
     trained_models               = {}
     val_results, test_results    = {}, {}
 
     for name, model in [('MLP', MLP()), ('GCN', GCN()), ('GAT', GAT())]:
+        model = model.to(DEVICE)
         print(f'▶ {name} 학습 중...')
         train_model(model, train_data, val_data)
         val_mae  = evaluate(model, val_data)    * max_occ
@@ -291,12 +306,12 @@ if __name__ == '__main__':
         val_results[name]     = val_mae
         test_results[name]    = test_mae
         trained_models[name]  = model
-        print(f'  val  MAE (1학기 synthetic) : {val_mae:.1f}명')
-        print(f'  test MAE (2학기 실제)      : {test_mae:.1f}명\n')
+        print(f'  val  MAE (2024-1 실제) : {val_mae:.1f}명')
+        print(f'  test MAE (2025-2 실제) : {test_mae:.1f}명\n')
 
     # ── 4. 결과 요약
     print('=' * 52)
-    print(f'{"모델":<5} {"1학기 val MAE":>17} {"2학기 test MAE":>17}')
+    print(f'{"모델":<5} {"2024-1 val MAE":>17} {"2025-2 test MAE":>18}')
     print('-' * 52)
     for name in ('MLP', 'GCN', 'GAT'):
         print(f'{name:<5} {val_results[name]:>15.1f}명 {test_results[name]:>15.1f}명')

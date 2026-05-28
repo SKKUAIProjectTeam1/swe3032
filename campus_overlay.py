@@ -42,9 +42,12 @@ BUILDING_LABELS = {
     '40': '40\nSemicond.',
 }
 
-MAP_PATH      = '/home/sean429/swe3032/maps/카카오맵확대.png'
-SNAPSHOT_PATH = '/home/sean429/swe3032/data/2025_1_snapshot.csv'
-BUILDINGS     = list(BUILDING_PX.keys())
+MAP_PATH   = '/home/sean429/swe3032/maps/카카오맵확대.png'
+SNAPSHOT   = {
+    '2025-1': '/home/sean429/swe3032/data/2025_1_snapshot.csv',
+    '2025-2': '/home/sean429/swe3032/data/2025_2_snapshot.csv',
+}
+BUILDINGS  = list(BUILDING_PX.keys())
 
 _DAY_EN = {'월': 'Mon', '화': 'Tue', '수': 'Wed', '목': 'Thu', '금': 'Fri', '토': 'Sat'}
 
@@ -168,8 +171,8 @@ def calibrate():
 
 
 # ── GIF / PNG ─────────────────────────────────────────────────────────────────
-def make_gif(day: str, out_path: str):
-    df    = pd.read_csv(SNAPSHOT_PATH)
+def make_gif(day: str, out_path: str, semester: str = '2025-1'):
+    df    = pd.read_csv(SNAPSHOT[semester])
     rows  = df[df['요일'] == day].reset_index(drop=True)
     if rows.empty:
         print(f'[ERROR] {day} 데이터 없음'); return
@@ -195,8 +198,8 @@ def make_gif(day: str, out_path: str):
     print(f'Saved GIF: {out_path}  ({len(rows)} frames)')
 
 
-def make_png(day: str, time: str, out_path: str):
-    df   = pd.read_csv(SNAPSHOT_PATH)
+def make_png(day: str, time: str, out_path: str, semester: str = '2025-1'):
+    df   = pd.read_csv(SNAPSHOT[semester])
     rows = df[(df['요일'] == day) & (df['시각'] == time)]
     if rows.empty:
         print(f'[ERROR] {day} {time} 데이터 없음'); return
@@ -220,15 +223,22 @@ def make_png(day: str, time: str, out_path: str):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--calibrate', action='store_true')
-    parser.add_argument('--day',  default='월')
-    parser.add_argument('--time', default=None)
+    parser.add_argument('--day',      default=None)
+    parser.add_argument('--time',     default=None)
+    parser.add_argument('--semester', default='2025-1', choices=['2025-1', '2025-2'])
     args = parser.parse_args()
+
+    DAYS = ['월', '화', '수', '목', '금']
+    sem  = args.semester.replace('-', '_')
 
     if args.calibrate:
         calibrate()
     elif args.time:
-        make_png(args.day, args.time,
-                 f'/home/sean429/swe3032/campus_{args.day}_{args.time.replace(":","-")}.png')
+        day = args.day or '월'
+        out = f'/home/sean429/swe3032/animations/campus_{sem}_{day}_{args.time.replace(":","-")}.png'
+        make_png(day, args.time, out, args.semester)
     else:
-        make_gif(args.day,
-                 f'/home/sean429/swe3032/campus_{args.day}.gif')
+        days = [args.day] if args.day else DAYS
+        for day in days:
+            out = f'/home/sean429/swe3032/animations/campus_{sem}_{day}.gif'
+            make_gif(day, out, args.semester)

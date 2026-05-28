@@ -38,11 +38,11 @@ HIDDEN      = 64
 EPOCHS      = 200
 LR          = 1e-3
 TRAIN_RATIO = 0.8
-SNAPSHOT_TRAIN = '/home/sean429/swe3032/2024_2_snapshot.csv'
-SNAPSHOT_VAL   = '/home/sean429/swe3032/2024_2_snapshot.csv'
-SNAPSHOT_TEST  = '/home/sean429/swe3032/2025_2_snapshot.csv'
-OUT_CSV        = '/home/sean429/swe3032/2025_2_pred.csv'
-OUT_PLOT       = '/home/sean429/swe3032/campus_eval_{day}.png'
+SNAPSHOT_TRAIN = '/home/sean429/swe3032/data/2024_2_snapshot.csv'
+SNAPSHOT_VAL   = '/home/sean429/swe3032/data/2024_2_snapshot.csv'
+SNAPSHOT_TEST  = '/home/sean429/swe3032/data/2025_2_snapshot.csv'
+OUT_CSV        = '/home/sean429/swe3032/results/2025_2_pred.csv'
+OUT_PLOT       = '/home/sean429/swe3032/plots/campus_eval_{day}.png'
 DAY_ORDER   = ['월', '화', '수', '목', '금', '토']
 
 # ── 디바이스 ──────────────────────────────────────────────────────────────────

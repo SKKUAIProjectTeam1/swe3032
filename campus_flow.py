@@ -61,7 +61,7 @@ def flow_lookup(flows_df: pd.DataFrame) -> dict:
 
 
 if __name__ == '__main__':
-    df    = pd.read_csv('/home/sean429/swe3032/2025_1_snapshot.csv')
+    df    = pd.read_csv('/home/sean429/swe3032/data/2025_1_snapshot.csv')
     flows = compute_flows(df)
     print(flows[flows['flow'] > 0].sort_values('flow', ascending=False).head(20).to_string(index=False))
     print(f'\n총 {len(flows)}개 레코드, 최대 flow = {flows["flow"].max():.0f}명')

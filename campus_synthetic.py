@@ -62,8 +62,8 @@ def build_dataset(snapshot_path: str,
 
 
 if __name__ == '__main__':
-    instances = build_dataset('/home/sean429/swe3032/2025_1_snapshot.csv', n_instances=5)
-    orig = pd.read_csv('/home/sean429/swe3032/2025_1_snapshot.csv')
+    instances = build_dataset('/home/sean429/swe3032/data/2025_1_snapshot.csv', n_instances=5)
+    orig = pd.read_csv('/home/sean429/swe3032/data/2025_1_snapshot.csv')
 
     print('=== 원본 vs synthetic 비교 (월 10:00) ===')
     t = orig[(orig['요일'] == '월') & (orig['시각'] == '10:00')].iloc[0]

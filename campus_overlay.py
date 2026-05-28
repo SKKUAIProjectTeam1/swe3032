@@ -42,8 +42,8 @@ BUILDING_LABELS = {
     '40': '40\nSemicond.',
 }
 
-MAP_PATH      = '/home/sean429/swe3032/카카오맵확대.png'
-SNAPSHOT_PATH = '/home/sean429/swe3032/2025_1_snapshot.csv'
+MAP_PATH      = '/home/sean429/swe3032/maps/카카오맵확대.png'
+SNAPSHOT_PATH = '/home/sean429/swe3032/data/2025_1_snapshot.csv'
 BUILDINGS     = list(BUILDING_PX.keys())
 
 _DAY_EN = {'월': 'Mon', '화': 'Tue', '수': 'Wed', '목': 'Thu', '금': 'Fri', '토': 'Sat'}

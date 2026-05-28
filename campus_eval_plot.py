@@ -23,9 +23,9 @@ BUILDING_IDS = list(BUILDINGS.keys())
 _BLDG_LABEL  = {b: BUILDINGS[b]['name'] for b in BUILDING_IDS}
 _DAY_EN      = {'월': 'Mon', '화': 'Tue', '수': 'Wed', '목': 'Thu', '금': 'Fri', '토': 'Sat'}
 
-PRED_CSV_1  = '/home/sean429/swe3032/2025_1_pred.csv'
-PRED_CSV_2  = '/home/sean429/swe3032/2025_2_pred.csv'
-OUT_PLOT    = '/home/sean429/swe3032/campus_eval_{semester}_{day}.png'
+PRED_CSV_1  = '/home/sean429/swe3032/results/2025_1_pred.csv'
+PRED_CSV_2  = '/home/sean429/swe3032/results/2025_2_pred.csv'
+OUT_PLOT    = '/home/sean429/swe3032/plots/campus_eval_{semester}_{day}.png'
 
 MODEL_STYLE = {
     'MLP': dict(color='#3498db', ls='--', marker='s', lw=1.8, ms=4),

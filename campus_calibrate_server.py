@@ -10,20 +10,30 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 
 SAVE_PATH = '/home/sean429/swe3032/building_px.json'
-
-MAP_PATH = '/home/sean429/swe3032/카카오맵확대.png'
+MAP_PATH = '/home/sean429/swe3032/maps/카카오맵확대.png'
 PORT = 8765
 
-CLICK_ORDER = ['85', '26', '23', '22', '21', '33', '40']
+CLICK_ORDER = [
+    '05', '21', '22', '23', '24', '25', '26', '27', '31', '32', '33', '40',
+    '51', '53', '61', '62', '62B08', '71', '83', '85', '86'
+]
 NAMES = {
-    '85': '산학협력센터(85)', '26': '제2공학관(26)', '23': '공과대학(23)',
-    '22': '제1공학관(22)',   '21': '정보통신대학(21)', '33': '화학관(33)',
-    '40': '반도체관(40)',
+    '05': '수성관(05)', '21': '정보통신대학(21)', '22': '제1공학관(22)',
+    '23': '공과대학(23)', '24': '공학실습동(24)', '25': '제2공학관(25)', 
+    '26': '제2공학관(26)', '27': '제2공학관(27)',
+    '31': '제1과학관(31)', '32': '제2과학관(32)', '33': '화학관(33)',
+    '40': '반도체관(40)', '51': '기초학문관(51)', '53': '약학관(53)',
+    '61': '생명공학관(61)', '62': '생명공학관(62)', '62B08': '생명공학관B08',
+    '71': '의학관(71)', '83': '제2종합연구동(83)', '85': '산학협력센터(85)',
+    '86': 'N센터(86)'
 }
+# 기존 알고 있는 좌표 (나머지는 0,0)
 OLD_PX = {
-    '85': (1139, 342), '26': (1626, 596), '23': (1641, 826),
-    '22': (1615, 1027), '21': (1571, 1087), '33': (1578, 1562), '40': (1717, 1663),
+    '85': (1288, 465), '26': (1693, 721), '23': (1517, 966),
+    '22': (1609, 1111), '21': (1457, 1170), '33': (1613, 1800), '40': (1812, 1749),
 }
+for b in CLICK_ORDER:
+    if b not in OLD_PX: OLD_PX[b] = (0, 0)
 
 img_b64 = base64.b64encode(Path(MAP_PATH).read_bytes()).decode()
 
@@ -64,13 +74,13 @@ HTML = f"""<!DOCTYPE html>
   <button onclick="reset()">Reset</button>
 </div>
 <div id="wrap">
-  <img id="map" src="data:image/png;base64,{img_b64}">
+  <img id="map" src="data:image/png;base64,{{img_b64}}">
 </div>
 
 <script>
-const ORDER  = {json.dumps(CLICK_ORDER)};
-const NAMES  = {json.dumps(NAMES)};
-const OLD_PX = {json.dumps(OLD_PX)};
+const ORDER  = {{json.dumps(CLICK_ORDER)}};
+const NAMES  = {{json.dumps(NAMES)}};
+const OLD_PX = {{json.dumps(OLD_PX)}};
 let collected = {{}};
 
 const map  = document.getElementById('map');
@@ -180,9 +190,9 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header('Content-Type', 'text/html; charset=utf-8')
         self.end_headers()
-        self.wfile.write(HTML.encode())
+        self.wfile.write(HTML.format(img_b64=img_b64).encode())
     def log_message(self, *a): pass
 
-print(f'http://localhost:{PORT}  을 브라우저에서 열어주세요')
+print(f'http://localhost:{{PORT}}  을 브라우저에서 열어주세요')
 print('Ctrl+C 로 종료')
 HTTPServer(('0.0.0.0', PORT), Handler).serve_forever()

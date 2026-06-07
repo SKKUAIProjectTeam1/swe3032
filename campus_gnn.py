@@ -33,14 +33,23 @@ from campus_graph import BUILDINGS, EDGES
 from campus_synthetic import build_dataset, BUILDING_IDS
 
 # ── 하이퍼파라미터 ────────────────────────────────────────────────────────────
-N_INSTANCES = 200
+N_INSTANCES = 100  # 데이터가 많아졌으므로 인스턴스 조절
 HIDDEN      = 64
-EPOCHS      = 200
+EPOCHS      = 150
 LR          = 1e-3
 TRAIN_RATIO = 0.8
-SNAPSHOT_TRAIN = '/home/sean429/swe3032/data/2024_2_snapshot.csv'
-SNAPSHOT_VAL   = '/home/sean429/swe3032/data/2024_2_snapshot.csv'
-SNAPSHOT_TEST  = '/home/sean429/swe3032/data/2025_2_snapshot.csv'
+
+# 새로운 데이터 경로 (new_snapshot)
+SNAPSHOTS = {
+    '2024_1': '/home/sean429/swe3032/new_snapshot/snapshot_2024_1.csv',
+    '2024_2': '/home/sean429/swe3032/new_snapshot/snapshot_2024_2.csv',
+    '2025_1': '/home/sean429/swe3032/new_snapshot/snapshot_2025_1.csv',
+    '2025_2': '/home/sean429/swe3032/new_snapshot/snapshot_2025_2.csv',
+}
+
+SNAPSHOT_TRAIN = SNAPSHOTS['2025_1']  # 기본값
+SNAPSHOT_VAL   = SNAPSHOTS['2025_1']
+SNAPSHOT_TEST  = SNAPSHOTS['2025_2']
 OUT_CSV        = '/home/sean429/swe3032/results/2025_2_pred.csv'
 OUT_PLOT       = '/home/sean429/swe3032/plots/campus_eval_{day}.png'
 DAY_ORDER   = ['월', '화', '수', '목', '금', '토']
@@ -53,16 +62,21 @@ print(f'[device] {DEVICE}')
 node_idx   = {b: i for i, b in enumerate(BUILDING_IDS)}
 max_dist   = max(dist for _, _, _, dist in EDGES)
 edge_index = torch.tensor(
-    [[node_idx[s], node_idx[d]] for s, d, _, _ in EDGES], dtype=torch.long
+    [[node_idx[s], node_idx[d]] for s, d, _, _ in EDGES if s in node_idx and d in node_idx], 
+    dtype=torch.long
 ).t().contiguous().to(DEVICE)
 edge_attr  = torch.tensor(
-    [[w, dist / max_dist] for _, _, w, dist in EDGES], dtype=torch.float
+    [[w, dist / max_dist] for s, d, w, dist in EDGES if s in node_idx and d in node_idx], 
+    dtype=torch.float
 ).to(DEVICE)
 
 
 def time_features(day: str, time: str) -> list:
     """요일 + 시각 → sin/cos 인코딩"""
-    h, m   = map(int, time.split(':'))
+    try:
+        h, m   = map(int, time.split(':'))
+    except:
+        h, m = 0, 0
     frac_h = (h * 60 + m) / (24 * 60)
     frac_d = DAY_ORDER.index(day) / len(DAY_ORDER) if day in DAY_ORDER else 0
     return [
@@ -74,12 +88,23 @@ def time_features(day: str, time: str) -> list:
 def build_samples(instances: list, max_occ: float = None):
     """
     각 인스턴스 × 각 시간 전환(t→t+1) → PyG Data 리스트
-    node feature: [occ_norm, sin_h, cos_h, sin_d, cos_d]  (5-dim)
-    target:       occ_norm at t+1
-
-    max_occ: 외부 지정 시 사용 — cross-semester 테스트 시 학습 기준으로 고정
     """
-    all_occ = np.concatenate([inst[BUILDING_IDS].values for inst in instances])
+    # 62B08 데이터는 62에 합산하여 처리
+    for inst in instances:
+        if '62B08' in inst.columns and '62' in inst.columns:
+            inst['62'] = inst['62'] + inst['62B08']
+            
+    # max_occ 계산 시 존재하지 않는 컬럼 0 처리
+    occ_data = []
+    for inst in instances:
+        for b in BUILDING_IDS:
+            if b in inst.columns:
+                occ_data.append(inst[b].values)
+            else:
+                occ_data.append(np.zeros(len(inst)))
+    
+    all_occ = np.concatenate(occ_data) if occ_data else np.array([0])
+    
     if max_occ is None:
         max_occ = float(all_occ.max()) if all_occ.max() > 0 else 1.0
 
@@ -91,8 +116,9 @@ def build_samples(instances: list, max_occ: float = None):
             if r_t['요일'] != r_t1['요일']:
                 continue
             tf = time_features(r_t['요일'], r_t['시각'])
-            x  = torch.tensor([[r_t[b] / max_occ] + tf for b in BUILDING_IDS], dtype=torch.float)
-            y  = torch.tensor([r_t1[b] / max_occ for b in BUILDING_IDS], dtype=torch.float)
+            # .get(b, 0) 으로 없는 건물 대응
+            x  = torch.tensor([[float(r_t.get(b, 0)) / max_occ] + tf for b in BUILDING_IDS], dtype=torch.float)
+            y  = torch.tensor([float(r_t1.get(b, 0)) / max_occ for b in BUILDING_IDS], dtype=torch.float)
             samples.append(Data(x=x, edge_index=edge_index, edge_attr=edge_attr, y=y).to(DEVICE))
 
     return samples, max_occ
@@ -185,14 +211,14 @@ def predict_all_slots(models: dict, df: pd.DataFrame, max_occ: float) -> pd.Data
                 r_t, r_t1 = day_df.iloc[i], day_df.iloc[i + 1]
                 tf   = time_features(str(r_t['요일']), str(r_t['시각']))
                 x    = torch.tensor(
-                    [[r_t[b] / max_occ] + tf for b in BUILDING_IDS], dtype=torch.float
+                    [[float(r_t.get(b, 0)) / max_occ] + tf for b in BUILDING_IDS], dtype=torch.float
                 )
                 data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr).to(DEVICE)
                 preds = {name: model(data).cpu().numpy() for name, model in models.items()}
 
                 for j, b in enumerate(BUILDING_IDS):
                     row = {'요일': day, '시각': r_t1['시각'], 'building': b,
-                           'actual': float(r_t1[b])}
+                           'actual': float(r_t1.get(b, 0))}
                     for name, p in preds.items():
                         row[f'pred_{name}'] = max(0.0, float(p[j]) * max_occ)
                     records.append(row)

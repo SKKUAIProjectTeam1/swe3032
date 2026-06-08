@@ -34,6 +34,8 @@ for i, (idx, row) in enumerate(gdf_proj.iterrows()):
         px = (x - minx) * scale + offx
         py = (maxy - y) * scale + offy  # 이미지 좌표는 y가 아래로 증가하므로 반전
         pts.append((int(px), int(py)))
+    if len(pts) > 1 and pts[0] == pts[-1]:
+        pts.pop()
     BUILDING_POLY[str(i).zfill(2)] = pts
 
 print(f"변환된 건물 폴리곤 개수: {len(BUILDING_POLY)}")

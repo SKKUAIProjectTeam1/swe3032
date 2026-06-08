@@ -35,7 +35,7 @@ from campus_synthetic import build_dataset, BUILDING_IDS
 # ── 하이퍼파라미터 ────────────────────────────────────────────────────────────
 N_INSTANCES = 100  # 데이터가 많아졌으므로 인스턴스 조절
 HIDDEN      = 64
-EPOCHS      = 500   # [추가] 과적합 관측을 위해 150 → 500으로 증가
+EPOCHS      = 150
 LR          = 1e-3
 TRAIN_RATIO = 0.8
 
@@ -52,7 +52,6 @@ SNAPSHOT_VAL   = SNAPSHOTS['2025_1']
 SNAPSHOT_TEST  = SNAPSHOTS['2025_2']
 OUT_CSV        = '/home/sean429/swe3032/results/2025_2_pred.csv'
 OUT_PLOT       = '/home/sean429/swe3032/plots/campus_eval_{day}.png'
-OUT_LOSS_PLOT  = '/home/sean429/swe3032/plots/loss_curve_{model}.png'  # [추가] 학습 곡선 저장 경로
 DAY_ORDER   = ['월', '화', '수', '목', '금', '토']
 
 # ── 디바이스 ──────────────────────────────────────────────────────────────────
@@ -176,11 +175,9 @@ class GAT(nn.Module):
 # ── 학습 / 평가 ───────────────────────────────────────────────────────────────
 BATCH_SIZE = 256
 
-def train_model(model, train_data, val_data, test_data=None, epochs=EPOCHS):
-    # [추가] test_data: 매 epoch test MAE도 기록해 cross-semester 과적합을 시각화하기 위해 추가
+def train_model(model, train_data, val_data, epochs=EPOCHS):
     loader = DataLoader(train_data, batch_size=BATCH_SIZE, shuffle=True)
     opt    = torch.optim.Adam(model.parameters(), lr=LR)
-    train_losses, val_maes, test_maes = [], [], []  # [추가] epoch별 loss 기록용 리스트
     for epoch in range(1, epochs + 1):
         model.train()
         total = 0.0
@@ -190,35 +187,9 @@ def train_model(model, train_data, val_data, test_data=None, epochs=EPOCHS):
             loss.backward()
             opt.step()
             total += loss.item()
-        train_mse = total / len(loader)
-        val_mae   = evaluate(model, val_data)
-        train_losses.append(train_mse)          # [추가]
-        val_maes.append(val_mae)                # [추가]
-        if test_data is not None:
-            test_maes.append(evaluate(model, test_data))  # [추가]
         if epoch % 40 == 0:
-            print(f'    epoch {epoch:3d} | train MSE {train_mse:.5f} | val MAE {val_mae:.4f}')
-    return train_losses, val_maes, test_maes  # [추가] 호출부에서 plot_loss_curve에 넘겨주기 위해 반환
-
-
-# [추가] 과적합 관측용 학습 곡선 플롯 함수
-# train MSE는 epoch 증가에 따라 0에 수렴, val/test MAE는 plateau 또는 증가하는 것을 시각화
-def plot_loss_curve(name, train_losses, val_maes, test_maes, out_path):
-    epochs = range(1, len(train_losses) + 1)
-    fig, ax = plt.subplots(figsize=(9, 5))
-    ax.plot(epochs, train_losses, label='Train MSE',         color='#2ecc71', lw=2)
-    ax.plot(epochs, val_maes,    label='Val MAE (2024-2)',   color='#3498db', lw=2, ls='--')
-    if test_maes:
-        ax.plot(epochs, test_maes, label='Test MAE (2025-2)', color='#e74c3c', lw=2, ls=':')
-    ax.set_xlabel('Epoch')
-    ax.set_ylabel('Loss (normalized)')
-    ax.set_title(f'{name} — 학습 곡선 (과적합 관측)')
-    ax.legend()
-    ax.grid(alpha=0.3)
-    plt.tight_layout()
-    plt.savefig(out_path, dpi=120, bbox_inches='tight')
-    plt.close()
-    print(f'Saved: {out_path}')
+            mae = evaluate(model, val_data)
+            print(f'    epoch {epoch:3d} | train MSE {total/len(loader):.5f} | val MAE {mae:.4f}')
 
 
 def evaluate(model, data_list):
@@ -363,18 +334,14 @@ if __name__ == '__main__':
     for name, model in [('MLP', MLP()), ('GCN', GCN()), ('GAT', GAT())]:
         model = model.to(DEVICE)
         print(f'▶ {name} 학습 중...')
-        train_losses, val_maes_hist, test_maes_hist = train_model(  # [추가] loss history 수신
-            model, train_data, val_data, test_data=test_samples      # [추가] test_data 전달
-        )
-        val_mae  = evaluate(model, val_data)     * max_occ
+        train_model(model, train_data, val_data)
+        val_mae  = evaluate(model, val_data)    * max_occ
         test_mae = evaluate(model, test_samples) * max_occ
-        val_results[name]    = val_mae
-        test_results[name]   = test_mae
-        trained_models[name] = model
+        val_results[name]     = val_mae
+        test_results[name]    = test_mae
+        trained_models[name]  = model
         print(f'  val  MAE (2024-2 실제) : {val_mae:.1f}명')
         print(f'  test MAE (2025-2 실제) : {test_mae:.1f}명\n')
-        plot_loss_curve(name, train_losses, val_maes_hist, test_maes_hist,  # [추가] 학습 곡선 저장
-                        OUT_LOSS_PLOT.format(model=name))
 
     # ── 4. 결과 요약
     print('=' * 52)

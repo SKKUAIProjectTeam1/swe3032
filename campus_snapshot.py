@@ -1,30 +1,19 @@
 """
 campus_snapshot.py
-crawl/ 폴더의 학과별 CSV → 학기별 요일×시각×건물 스냅샷 CSV
+동일 양식의 xlsx → 요일×시각×건물 스냅샷 CSV
 
-사용법:
-  python campus_snapshot.py              # 4개 학기 전체
-  python campus_snapshot.py 2025-1      # 특정 학기만
+사용법: python campus_snapshot.py 2025_1.xlsx
+       python campus_snapshot.py 2025_2.xlsx
 """
-import sys, re, os, glob
+import sys, re
 import pandas as pd
 
-SLOT_MIN  = 30
+SLOT_MIN  = 30       # 스냅샷 간격 (분)
 DAY_START = '08:00'
 DAY_END   = '22:00'
 DAY_ORDER = ['월', '화', '수', '목', '금', '토']
 
-CRAWL_DIR = os.path.join(os.path.dirname(__file__), 'crawl')
 
-SEMESTER_FOLDERS = {
-    '2024-1': '2024-1',
-    '2024-2': '2024-2',
-    '2025-1': '2025-1',
-    '2025-2': '2025-2',
-}
-
-
-# ── 시간 유틸 ──────────────────────────────────────────────────────────────
 def _t2m(t: str) -> int:
     h, m = map(int, t.split(':'))
     return h * 60 + m
@@ -33,12 +22,13 @@ def _m2t(m: int) -> str:
     return f'{m // 60:02d}:{m % 60:02d}'
 
 
-# ── 세션 파싱 ──────────────────────────────────────────────────────────────
 def parse_sessions(time_str: str, fallback_bld: str = '') -> list[dict]:
     """
     '화10:30-11:45【21502】,목09:00-10:15【21502】'
     → [{'day':'화','start':'10:30','end':'11:45','building':'21'}, ...]
-    미지정·온라인 등은 스킵.
+
+    건물번호: 【21502】→ '21', 【모듈D】→ '모듈D'
+    미지정·온라인 등은 스킵, fallback_bld로 대체
     """
     if not time_str or pd.isna(time_str):
         return []
@@ -52,7 +42,7 @@ def parse_sessions(time_str: str, fallback_bld: str = '') -> list[dict]:
         day, start, end = m.group(1), m.group(2), m.group(3)
 
         bld = None
-        for rm_m in re.finditer(r'[【\[]([^】\]]+)[】\]]', seg):
+        for rm_m in re.finditer(r'【([^】]+)】', seg):
             r = rm_m.group(1).strip()
             if not r or any(x in r for x in ('미지정', '온라인', '원격', 'ON', 'OFF', 'h(')):
                 continue
@@ -73,72 +63,36 @@ def parse_sessions(time_str: str, fallback_bld: str = '') -> list[dict]:
     return results
 
 
-# ── CSV 머지 + 전처리 ──────────────────────────────────────────────────────
-def load_semester(folder_key: str) -> pd.DataFrame:
+def build_snapshot(df: pd.DataFrame, slot_min: int = SLOT_MIN) -> pd.DataFrame:
     """
-    crawl/{folder_key}/*.csv 전체 머지 후:
-    1. building=0 제외
-    2. (과목명, 수업시간대) 기준 중복 제거  ← 학과간 공통과목 중복
-    3. 수강인원 / 개설강좌수  ← 분반 균등분배
+    각 시간 슬롯마다 건물별 체류 인원수 계산.
+    체류: start <= slot_time < end 인 수업의 수강인원 합산.
     """
-    pattern = os.path.join(CRAWL_DIR, folder_key, '*.csv')
-    files = glob.glob(pattern)
-    if not files:
-        print(f'  [WARN] {pattern} - 파일 없음')
-        return pd.DataFrame()
-
-    frames = []
-    for fp in files:
-        try:
-            frames.append(pd.read_csv(fp, encoding='utf-8-sig'))
-        except Exception as e:
-            print(f'  [WARN] {fp}: {e}')
-
-    df = pd.concat(frames, ignore_index=True)
-    print(f'  머지: {len(files)}개 파일, {len(df)}행')
-
-    # 컬럼명 표준화 (혹시 다를 경우 대비)
-    df.columns = df.columns.str.strip()
-
-    # building=0 제외
     df = df[df['building'].astype(str) != '0'].copy()
 
-    # (교과목명, 수업시간대) dedup — 같은 강의가 여러 학과 파일에 중복
-    before = len(df)
-    df = df.drop_duplicates(subset=['교과목명', '수업시간대'], keep='first')
-    print(f'  dedup: {before} -> {len(df)}행 ({before - len(df)}건 중복 제거)')
-
-    # 개설강좌수로 균등분배
-    df['개설강좌수'] = pd.to_numeric(df['개설강좌수'], errors='coerce').fillna(1).clip(lower=1)
-    df['수강인원']   = pd.to_numeric(df['수강인원'],   errors='coerce').fillna(0)
-    df['분반인원']   = (df['수강인원'] / df['개설강좌수']).round().astype(int)
-
-    return df
-
-
-# ── 스냅샷 빌드 ────────────────────────────────────────────────────────────
-def build_snapshot(df: pd.DataFrame) -> pd.DataFrame:
-    """요일×시각 슬롯마다 건물별 체류 인원수."""
+    # 수업 세션 이벤트 수집
     events = []
     for _, row in df.iterrows():
         sessions = parse_sessions(
             row.get('수업시간대', ''),
             str(row.get('building', ''))
         )
-        enr = int(row.get('분반인원', 0))
+        enr = int(row['수강인원']) if pd.notna(row.get('수강인원')) else 0
         for s in sessions:
             events.append({**s, 'enr': enr})
 
     if not events:
-        print('  [WARN] 파싱된 세션 없음')
+        print('[WARN] 파싱된 세션 없음 — 수업시간대 컬럼 확인 필요')
         return pd.DataFrame()
 
+    # 등장한 건물만, 숫자→정수 오름차순, 모듈* 뒤
     buildings = sorted(
         set(e['building'] for e in events),
         key=lambda x: (0, int(x), '') if x.isdigit() else (1, 0, x)
     )
+
     days  = [d for d in DAY_ORDER if any(e['day'] == d for e in events)]
-    slots = range(_t2m(DAY_START), _t2m(DAY_END), SLOT_MIN)
+    slots = range(_t2m(DAY_START), _t2m(DAY_END), slot_min)
 
     records = []
     for day in days:
@@ -156,35 +110,27 @@ def build_snapshot(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(records)
 
 
-# ── 메인 ──────────────────────────────────────────────────────────────────
-def main(target: str | None = None):
-    targets = [target] if target else list(SEMESTER_FOLDERS.keys())
+def main(xlsx_path: str):
+    print(f'[읽기] {xlsx_path}')
+    df = pd.read_excel(xlsx_path)
+    df = df.loc[:, ~df.columns.str.startswith('Unnamed')]
+    print(f'  {len(df)}행, 컬럼: {df.columns.tolist()}')
 
-    for key in targets:
-        folder = SEMESTER_FOLDERS.get(key)
-        if not folder:
-            print(f'[ERROR] 알 수 없는 학기: {key}')
-            continue
+    snap = build_snapshot(df)
+    if snap.empty:
+        return
 
-        print(f'\n=== {key} ===')
-        df = load_semester(folder)
-        if df.empty:
-            continue
+    out_path = xlsx_path.replace('.xlsx', '_snapshot.csv')
+    snap.to_csv(out_path, index=False, encoding='utf-8-sig')
+    print(f'[저장] {out_path}  ({snap.shape[0]}행 × {snap.shape[1]}열)')
 
-        snap = build_snapshot(df)
-        if snap.empty:
-            continue
-
-        out_path = os.path.join(CRAWL_DIR, folder, f'snapshot_{folder.replace("-","_")}.csv')
-        snap.to_csv(out_path, index=False, encoding='utf-8-sig')
-
-        bld_cols = [c for c in snap.columns if c not in ('요일', '시각')]
-        active   = snap[snap[bld_cols].sum(axis=1) > 0]
-        print(f'  저장: {out_path}')
-        print(f'  슬롯: {len(snap)}개 전체 / {len(active)}개 수업 있음')
-        print(f'  건물: {bld_cols}')
+    # 수업이 있는 슬롯만 출력 (확인용)
+    bld_cols = [c for c in snap.columns if c not in ('요일', '시각')]
+    active = snap[snap[bld_cols].sum(axis=1) > 0]
+    print(f'\n[활성 슬롯 {len(active)}개]')
+    print(active.to_string(index=False))
 
 
 if __name__ == '__main__':
-    arg = sys.argv[1] if len(sys.argv) > 1 else None
-    main(arg)
+    path = sys.argv[1] if len(sys.argv) > 1 else '2025_1.xlsx'
+    main(path)

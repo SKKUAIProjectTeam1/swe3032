@@ -58,17 +58,25 @@ DAY_ORDER   = ['월', '화', '수', '목', '금', '토']
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f'[device] {DEVICE}')
 
-# ── 그래프 구조 (고정) ────────────────────────────────────────────────────────
-node_idx   = {b: i for i, b in enumerate(BUILDING_IDS)}
-max_dist   = max(dist for _, _, _, dist in EDGES)
-edge_index = torch.tensor(
-    [[node_idx[s], node_idx[d]] for s, d, _, _ in EDGES if s in node_idx and d in node_idx], 
-    dtype=torch.long
-).t().contiguous().to(DEVICE)
-edge_attr  = torch.tensor(
-    [[w, dist / max_dist] for s, d, w, dist in EDGES if s in node_idx and d in node_idx], 
-    dtype=torch.float
-).to(DEVICE)
+# ── 그래프 구조 (Euclidean Distance 기반 Fully Connected) ───────────────────────
+node_idx = {b: i for i, b in enumerate(BUILDING_IDS)}
+edges_list = []
+dist_list = []
+
+for s in BUILDING_IDS:
+    for d in BUILDING_IDS:
+        if s == d: continue
+        # Euclidean 거리 계산
+        p1 = (BUILDINGS[s]['campus_x'], BUILDINGS[s]['campus_y'])
+        p2 = (BUILDINGS[d]['campus_x'], BUILDINGS[d]['campus_y'])
+        dist = np.sqrt((p1[0]-p2[0])**2 + (p1[1]-p2[1])**2)
+        edges_list.append([node_idx[s], node_idx[d]])
+        dist_list.append(dist)
+
+max_dist = max(dist_list) if dist_list else 1.0
+edge_index = torch.tensor(edges_list, dtype=torch.long).t().contiguous().to(DEVICE)
+# edge_attr: [1.0 (가중치 더미), 정규화된 거리]
+edge_attr = torch.tensor([[1.0, d / max_dist] for d in dist_list], dtype=torch.float).to(DEVICE)
 
 
 def time_features(day: str, time: str) -> list:

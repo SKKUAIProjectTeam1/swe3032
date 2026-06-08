@@ -14,8 +14,8 @@ PORT = 8765
 
 # 따야 할 건물 목록
 BUILDING_LIST = [
-    '05', '21', '22', '23', '24', '25', '26', '27', '31', '32', '33', '40',
-    '51', '53', '61', '62', '71', '83', '85', '86'
+    '03', '05', '21', '22', '23', '24', '25', '26', '27', '31', '32', '33', '40', '48',
+    '51', '53', '61', '62', '70', '71', '83', '85', '86'
 ]
 
 img_b64 = base64.b64encode(Path(MAP_PATH).read_bytes()).decode()
@@ -217,8 +217,9 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(HTML.encode())
     def log_message(self, *a): pass
 
-print(f'http://localhost:{PORT}  을 브라우저에서 열어주세요')
-print('1. 마우스로 건물의 각 모서리를 클릭하세요.')
-print('2. 한 건물을 다 그렸으면 [Finish & Next]를 누르세요.')
-print('3. 모든 건물을 마쳤으면 [Generate Code]를 눌러 결과를 복사하세요.')
-HTTPServer(('0.0.0.0', PORT), Handler).serve_forever()
+if __name__ == '__main__':
+    print(f'http://localhost:{PORT}  을 브라우저에서 열어주세요')
+    print('1. 마우스로 건물의 각 모서리를 클릭하세요.')
+    print('2. 한 건물을 다 그렸으면 [Finish & Next]를 누르세요.')
+    print('3. 모든 건물을 마쳤으면 [Generate Code]를 눌러 결과를 복사하세요.')
+    HTTPServer(('0.0.0.0', PORT), Handler).serve_forever()

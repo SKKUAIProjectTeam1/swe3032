@@ -1,69 +1,97 @@
 """
-campus_calibrate_click.py
-지도 위에서 건물 중심을 직접 클릭 → BUILDING_PX 좌표 출력
-
-실행:
-  python campus_calibrate_click.py
-
-순서대로 7개 건물을 클릭하면 BUILDING_PX 딕셔너리를 출력해줌.
-출력된 좌표를 campus_overlay.py의 BUILDING_PX에 붙여넣으면 됨.
+campus_calibrate_click.py (Full Version)
+지도 위에서 모든 건물의 중심점(Centroid)을 클릭하여 좌표를 수집합니다.
 """
 import numpy as np
 import matplotlib
-matplotlib.use('TkAgg')
+try:
+    matplotlib.use('TkAgg')
+except:
+    matplotlib.use('Agg') # GUI가 안되는 환경 대비
 import matplotlib.pyplot as plt
 from PIL import Image
+import os
 
-MAP_PATH    = '/home/sean429/swe3032/카카오맵확대.png'
-CLICK_ORDER = ['85', '26', '23', '22', '21', '33', '40']
+MAP_PATH = '/home/sean429/swe3032/maps/카카오맵확대.png'
+
+# 전체 건물 목록 (순서대로 클릭하게 됩니다)
+CLICK_ORDER = [
+    '03', '05', '21', '22', '23', '24', '25', '26', '27', '31', 
+    '32', '33', '40', '48', '51', '53', '61', '62', '70', '71', 
+    '83', '85', '86'
+]
+
 NAMES = {
-    '85': 'Cooperation(85)', '26': 'Eng.2(26)', '23': 'Eng.College(23)',
-    '22': 'Eng.1(22)',       '21': 'ICT(21)',   '33': 'Pharmacy(33)',
-    '40': 'Handok(40)',
+    '03': '학생회관', '05': '수성관', '21': '정보통신대학', '22': '제1공학관',
+    '23': '공과대학', '24': '공학실습동', '25': '제2공학관(25)', '26': '제2공학관(26)',
+    '27': '제2공학관(27)', '31': '제1과학관', '32': '제2과학관', '33': '화학관',
+    '40': '반도체관', '48': '삼성학술정보관', '51': '기초학문관', '53': '약학관',
+    '61': '생명공학관(61)', '62': '생명공학관(62)', '70': '대강당', '71': '의학관',
+    '83': '제2종합연구동', '85': '산학협력센터', '86': 'N센터'
 }
 
-img = np.array(Image.open(MAP_PATH))
-fig, ax = plt.subplots(figsize=(17, 16))
-fig.subplots_adjust(top=0.93)
-ax.imshow(img)
-ax.axis('off')
+if not os.path.exists(MAP_PATH):
+    print(f"Error: 지도 파일이 없습니다 ({MAP_PATH})")
+    exit(1)
 
-# 현재 기존 좌표 미리 표시 (회색)
-from campus_overlay import BUILDING_PX
-for bld, (px, py) in BUILDING_PX.items():
-    ax.scatter(px, py, s=200, c='gray', alpha=0.4, zorder=2)
-    ax.text(px + 20, py, f'{bld} (old)', fontsize=7, color='gray', alpha=0.6)
+img = Image.open(MAP_PATH)
+img_np = np.array(img)
+H, W, _ = img_np.shape
+
+fig, ax = plt.subplots(figsize=(16, 14))
+ax.imshow(img_np)
+ax.axis('off')
 
 collected = {}
 
 def on_click(event):
     if event.inaxes != ax or event.button != 1:
         return
+    
     n = len(collected)
     if n >= len(CLICK_ORDER):
         return
+    
     bld = CLICK_ORDER[n]
     x, y = int(event.xdata), int(event.ydata)
-    collected[bld] = (x, y)
-
-    ax.scatter(x, y, s=350, c='red', zorder=5, edgecolors='white', lw=2)
-    ax.text(x + 25, y, NAMES[bld], fontsize=10, color='red', fontweight='bold',
-            bbox=dict(fc='white', alpha=0.75, ec='none', pad=2))
-
+    # 계산용 좌표 (좌측 하단 0,0 기준)
+    calc_y = H - y
+    
+    collected[bld] = (x, y, calc_y)
+    
+    # 지도에 표시
+    ax.scatter(x, y, s=200, c='red', edgecolors='white', zorder=5)
+    ax.text(x + 15, y, f"{bld}: {NAMES[bld]}", fontsize=9, color='red', fontweight='bold',
+            bbox=dict(fc='white', alpha=0.8, ec='none', pad=1))
+    
     remaining = len(CLICK_ORDER) - len(collected)
     if remaining > 0:
         next_bld = CLICK_ORDER[len(collected)]
-        ax.set_title(f'Click {NAMES[next_bld]}  ({remaining} left)', fontsize=14, fontweight='bold')
+        ax.set_title(f'Click [{next_bld}] {NAMES[next_bld]} ({remaining} left)', fontsize=14)
     else:
-        ax.set_title('Done! Close the window.', fontsize=14, fontweight='bold', color='green')
-        print('\n# ── campus_overlay.py 의 BUILDING_PX를 아래로 교체 ──')
-        print('BUILDING_PX = {')
-        for k in CLICK_ORDER:
-            v = collected[k]
-            print(f"    '{k}': {v},  # {NAMES[k]}")
-        print('}')
+        ax.set_title('✅ All Done! Check terminal for coordinates.', fontsize=15, color='green', fontweight='bold')
+        print_results()
+    
     fig.canvas.draw_idle()
 
+def print_results():
+    print("\n" + "="*50)
+    print("📍 정제된 건물 좌표 (campus_graph.py 업데이트용)")
+    print("="*50)
+    print("BUILDINGS = {")
+    for bld in CLICK_ORDER:
+        x, y, _ = collected[bld]
+        print(f"    '{bld}': {{'name': '{NAMES[bld]}', 'campus_x': {x}, 'campus_y': {y}}},")
+    print("}")
+    print("="*50)
+    print("\n📏 거리 계산용 (좌측 하단 0,0 기준)")
+    for bld in CLICK_ORDER:
+        x, _, cy = collected[bld]
+        print(f"'{bld}': ({x}, {cy})")
+
 fig.canvas.mpl_connect('button_press_event', on_click)
-ax.set_title(f'Click {NAMES[CLICK_ORDER[0]]}  ({len(CLICK_ORDER)} buildings)', fontsize=14, fontweight='bold')
+ax.set_title(f'Click [03] {NAMES["03"]} ({len(CLICK_ORDER)} total)', fontsize=14)
+
+print("시작하려면 창을 열고 지도를 클릭하세요.")
+print(f"클릭 순서: {', '.join(CLICK_ORDER)}")
 plt.show()

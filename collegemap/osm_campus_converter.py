@@ -13,8 +13,11 @@ place = "Korea University, Seoul, South Korea"
 gdf = ox.features_from_place(place, tags={"building": True})
 gdf = gdf[gdf.geometry.geom_type.isin(["Polygon", "MultiPolygon"])]
 
-# WGS84(위경도) -> 평면 좌표(미터 단위, UTM 52N)로 투영
-gdf_proj = gdf.to_crs(epsg=32652)
+if gdf.empty:
+    raise ValueError(f"No building polygons found for place={place!r}")
+
+# WGS84(위경도) -> 캠퍼스 위치에 맞는 UTM으로 자동 투영
+gdf_proj = ox.project_gdf(gdf)
 minx, miny, maxx, maxy = gdf_proj.total_bounds
 
 scale = min(W / (maxx - minx), H / (maxy - miny)) * MARGIN

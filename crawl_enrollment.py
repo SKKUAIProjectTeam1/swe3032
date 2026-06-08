@@ -6,7 +6,7 @@
 - sugang_full.csv 저장
 """
 import sys, io
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
 
 import os, time, re, json, random
 import pandas as pd
@@ -144,6 +144,7 @@ def delay():
 # ── XHR 큐 헬퍼 ──────────────────────────────────────────────────────────────
 
 def flush_xhr(driver):
+    driver.execute_script(_XHR_INIT)   # 인터셉터 소실 시 재주입
     driver.execute_script("window._xhrQ = [];")
 
 
@@ -400,10 +401,17 @@ def dbl_click_course(driver, course_name: str, row_idx: int) -> bool:
             return False
 
     # single-click → Nexacro 선택 업데이트
-    ActionChains(driver).move_to_element(el).click().perform()
+    try:
+        ActionChains(driver).move_to_element(el).click().perform()
+    except Exception:
+        driver.execute_script("arguments[0].click();", el)
     time.sleep(0.8)  # Nexacro 선택 처리 대기
     # double-click → 팝업 열기
-    ActionChains(driver).move_to_element(el).double_click().perform()
+    try:
+        ActionChains(driver).move_to_element(el).double_click().perform()
+    except Exception:
+        driver.execute_script(
+            "arguments[0].dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));", el)
     _last_dbl_row = row_idx
     return True
 
@@ -413,9 +421,10 @@ def dbl_click_course(driver, course_name: str, row_idx: int) -> bool:
 _enroll_debug = 3  # 처음 N개 과목은 XHR URL 출력
 
 
-def enrollment_from_popup(driver, expected_course: str = '') -> tuple[int, int]:
+def enrollment_from_popup(driver, expected_course: str = '', gaesul_year: str = '', gaesul_term: str = '') -> tuple[int, int]:
     """
     XHR 큐에서 SUGANG_CNT, GAESUL_CNT 추출.
+    gaesul_year/gaesul_term 지정 시 해당 학기 행만 사용.
     expected_course 지정 시 팝업 과목명(GYOGWAMOK_KOR_NM)과 비교해 불일치 시 (0,0) 반환.
     """
     global _enroll_debug
@@ -443,14 +452,21 @@ def enrollment_from_popup(driver, expected_course: str = '') -> tuple[int, int]:
         url = item.get('url') or ''
         if 'NHSSU020262P' in url and 'select02' in url:
             records = parse_ssv(item.get('resp', ''))
-            if records:
-                first = records[0]
-                sugang = first.get('SUGANG_CNT', '').strip()
-                gaesul = first.get('GAESUL_CNT', '').strip()
-                return (
-                    int(sugang) if sugang.isdigit() else 0,
-                    int(gaesul) if gaesul.isdigit() else 0,
-                )
+            if not records:
+                continue
+            # 학기 지정 시 해당 행 우선, 없으면 첫 행
+            target = records[0]
+            if gaesul_year and gaesul_term:
+                for rec in records:
+                    if rec.get('GAESUL_YEAR') == gaesul_year and rec.get('GAESUL_TERM') == gaesul_term:
+                        target = rec
+                        break
+            sugang = target.get('SUGANG_CNT', '').strip()
+            gaesul = target.get('GAESUL_CNT', '').strip()
+            return (
+                int(sugang) if sugang.isdigit() else 0,
+                int(gaesul) if gaesul.isdigit() else 0,
+            )
 
     # 폴백: 모든 SSV에서 SUGANG_CNT
     for item in items:
@@ -496,6 +512,7 @@ def crawl():
     opts = Options()
     opts.add_argument('--no-sandbox')
     opts.add_argument('--disable-dev-shm-usage')
+    opts.add_argument('--disable-gpu')
     opts.add_argument('--start-maximized')
     opts.set_capability('goog:loggingPrefs', {'performance': 'ALL'})
 
@@ -503,6 +520,24 @@ def crawl():
         service=Service(ChromeDriverManager().install()),
         options=opts
     )
+    _COLS = ['학년도학기', '교과목명', '수업시간대', '수업요일및강의실', '수업형태', 'building', '수강인원', '개설강좌수']
+    _SEMESTER_MAP = {
+        '2024학년도 1학기': ('2024-1', '2024_1'),
+        '2024학년도 2학기': ('2024-2', '2024_2'),
+        '2025학년도 1학기': ('2025-1', '2025_1'),
+        '2025학년도 2학기': ('2025-2', '2025_2'),
+    }
+    _CRAWL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'crawl')
+
+    def _save_semester(rows, semester, dept):
+        folder, prefix = _SEMESTER_MAP[semester]
+        save_dir = os.path.join(_CRAWL_DIR, folder)
+        os.makedirs(save_dir, exist_ok=True)
+        df_s = pd.DataFrame(rows)[_COLS]
+        path = os.path.join(save_dir, f'{prefix}_data_{dept}.csv')
+        df_s.to_csv(path, index=False, encoding='utf-8-sig')
+        print(f'  → 저장: {path}  ({len(df_s)}행)')
+
     all_rows = []
 
     try:
@@ -563,105 +598,186 @@ def crawl():
         ac_click(driver, menu_el)
         time.sleep(12)
 
-        TARGET_DEPT = '소프트웨어학과'
+        TARGET_COLLEGES = [
+            '공과대학',
+            '생명공학대학',
+            '소프트웨어융합대학',
+            '약학대학',
+            '의과대학',
+            '자연과학대학',
+            '정보통신대학',
+        ]
         TARGET_SEMESTERS = [
+            '2024학년도 1학기',
+            '2024학년도 2학기',
             '2025학년도 1학기',
             '2025학년도 2학기',
         ]
-        _time_field = ''  # 첫 학기에서 한 번만 감지 후 재사용
 
-        for semester in TARGET_SEMESTERS:
-            print(f"\n{'='*60}")
-            print(f"[학기] {semester} 시작...")
+        # ── 단과대학별 학과 목록 수집 ────────────────────────────────────────
+        print("\n[학과 목록 수집] 단과대학별 학과 목록 수집 중...")
+        college_depts: dict[str, list[str]] = {}
 
-            # 4. 자연과학 캠퍼스 선택 (학기 변경 시 리셋될 수 있으므로 매 학기 재선택)
+        try:
+            camp_el = WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.XPATH, "//div[text()='자연과학']"))
+            )
+            ac_click(driver, camp_el)
+            time.sleep(2)
+        except Exception:
+            print("  [WARN] 자연과학 캠퍼스 선택 실패 (목록 수집)")
+
+        for college in TARGET_COLLEGES:
             try:
-                camp_el = WebDriverWait(driver, 10).until(
-                    EC.presence_of_element_located((By.XPATH, "//div[text()='자연과학']"))
-                )
-                ac_click(driver, camp_el)
-                time.sleep(2)
-            except Exception:
-                print("  [WARN] 자연과학 캠퍼스 버튼 못 찾음 — 현재 선택 유지")
+                open_dropdown(driver, idx=4, wait=2)
+                click_option(driver, college, timeout=10)
+                time.sleep(1.5)
+                depts = [d for d in collect_dropdown(driver, idx=5) if d not in ('선택', '전체', '')]
+                college_depts[college] = depts
+                print(f"  {college}: {len(depts)}개 → {depts}")
+            except Exception as e:
+                print(f"  [ERROR] {college} 학과 목록 수집 실패: {e}")
+                college_depts[college] = []
 
-            # 5. 학년도/학기 선택
-            open_dropdown(driver, idx=2, wait=2)
-            click_option(driver, semester, timeout=10)
-            time.sleep(3)
+        # ── 메인 크롤 루프: 단과대학 → 학과 → 학기 ──────────────────────────
+        global _last_dbl_row, _nx_grid_methods_printed
 
-            # 6. 도전학기 제외
-            open_dropdown(driver, idx=3, wait=2)
-            click_option(driver, '도전학기 제외', timeout=10)
-            time.sleep(2)
+        for college, depts in college_depts.items():
+            for dept in depts:
+                _time_field = ''
+                for semester in TARGET_SEMESTERS:
+                    # 이미 수집된 파일 스킵
+                    folder, prefix = _SEMESTER_MAP[semester]
+                    out_path = os.path.join(_CRAWL_DIR, folder, f'{prefix}_data_{dept}.csv')
+                    if os.path.exists(out_path):
+                        print(f"  [SKIP] {dept} {semester} — 이미 존재")
+                        continue
 
-            # 7. 소프트웨어학과 선택
-            open_dropdown(driver, idx=5, wait=2)
-            click_option(driver, TARGET_DEPT, timeout=10)
-            time.sleep(2)
+                    print(f"\n{'='*60}")
+                    print(f"[{college}] {dept} / {semester}")
 
-            # 8. 조회
-            course_records = query_courses(driver)
-            print(f"  강의 {len(course_records)}개")
+                    try:
+                        # 캠퍼스
+                        try:
+                            camp_el = WebDriverWait(driver, 10).until(
+                                EC.presence_of_element_located((By.XPATH, "//div[text()='자연과학']"))
+                            )
+                            ac_click(driver, camp_el)
+                            time.sleep(2)
+                        except Exception:
+                            print("  [WARN] 자연과학 캠퍼스 선택 실패")
 
-            if not course_records:
-                print(f"  [SKIP] 강의 없음")
-                continue
+                        # 학기
+                        open_dropdown(driver, idx=2, wait=2)
+                        click_option(driver, semester, timeout=10)
+                        time.sleep(3)
 
-            # 시간대 필드 자동 감지 (첫 유효 학기에서만)
-            if not _time_field:
-                _time_field = _find_time_field(course_records[0])
-                if _time_field:
-                    print(f"  [시간대 필드 감지] '{_time_field}'  예: {course_records[0].get(_time_field, '')[:40]!r}")
-                else:
-                    print("  [WARN] 시간대 필드 자동 감지 실패 — [SSV 전체 컬럼] 출력 확인 필요")
-
-            # 9. 과목별 더블클릭 → 팝업 수강인원 수집
-            # 학기마다 캐시 초기화 (같은 학수번호도 학기별 수강인원 다름)
-            enroll_cache: dict[str, tuple[int, int]] = {}
-            row_idx = 0
-            for r in course_records:
-                course   = r.get('GWAMOK_NAME', '').strip()
-                haksu_no = r.get('HAKSU_NO', '').strip()
-                room     = r.get('GYOSI_NAME', '').strip()
-                ctype    = r.get('HYUNGTAE', '').strip()
-                time_slot = r.get(_time_field, '').strip() if _time_field else ''
-
-                if not course:
-                    row_idx += 1
-                    continue
-                if re.search(r'i[-\s]?campus', ctype, re.IGNORECASE):
-                    row_idx += 1
-                    continue
-
-                if haksu_no in enroll_cache:
-                    enrollment, gaesul = enroll_cache[haksu_no]
-                    print(f"    [{row_idx}] {course}: 수강인원={enrollment} (캐시)")
-                else:
-                    print(f"    [{row_idx}] {course} 더블클릭 중...", flush=True)
-                    flush_xhr(driver)
-                    clicked = dbl_click_course(driver, course, row_idx)
-                    if clicked:
+                        # 도전학기
+                        open_dropdown(driver, idx=3, wait=2)
+                        click_option(driver, '도전학기 제외', timeout=10)
                         time.sleep(2)
-                        enrollment, gaesul = enrollment_from_popup(driver, expected_course=course)
-                        print(f"         팝업 닫는 중...", flush=True)
-                        close_popup(driver)
-                        delay()
-                    else:
-                        print(f"    [SKIP] row={row_idx}: {course}")
-                        enrollment, gaesul = 0, 0
-                    enroll_cache[haksu_no] = (enrollment, gaesul)
-                    print(f"    [{row_idx}] {course}: 수강인원={enrollment}, 개설강좌수={gaesul}")
-                all_rows.append({
-                    '학년도학기': semester,
-                    '교과목명': course,
-                    '수업시간대': time_slot,
-                    '수업요일및강의실': room,
-                    '수업형태': ctype,
-                    'building': parse_building(room),
-                    '수강인원': enrollment,
-                    '개설강좌수': gaesul,
-                })
-                row_idx += 1
+
+                        # 단과대학 (discovery 후 idx=5 필터 리셋을 위해 필요)
+                        open_dropdown(driver, idx=4, wait=2)
+                        click_option(driver, college, timeout=10)
+                        time.sleep(4)  # 학과 목록 로딩 대기
+
+                        # 학과
+                        open_dropdown(driver, idx=5, wait=2)
+                        click_option(driver, dept, timeout=15)
+                        time.sleep(2)
+
+                    except Exception as e:
+                        print(f"  [ERROR] 드롭다운 선택 실패, 스킵: {e.__class__.__name__}")
+                        try:
+                            driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.ESCAPE)
+                        except Exception:
+                            pass
+                        time.sleep(2)
+                        continue
+
+                    # 조회
+                    course_records = query_courses(driver)
+                    print(f"  강의 {len(course_records)}개")
+
+                    if not course_records:
+                        print(f"  [SKIP] 강의 없음")
+                        continue
+
+                    # 시간대 필드 감지 (학과별 첫 유효 학기에서만)
+                    if not _time_field:
+                        _time_field = _find_time_field(course_records[0])
+                        if _time_field:
+                            print(f"  [시간대 필드 감지] '{_time_field}'")
+                        else:
+                            print("  [WARN] 시간대 필드 자동 감지 실패")
+
+                    # 그리드 내비게이션 상태 초기화 (학과/학기 전환 시)
+                    _last_dbl_row = -1
+                    _nx_grid_methods_printed = False
+
+                    enroll_cache: dict[str, tuple[int, int]] = {}
+                    sem_rows = []
+                    row_idx = 0
+                    for r in course_records:
+                        course    = r.get('GWAMOK_NAME', '').strip()
+                        haksu_no  = r.get('HAKSU_NO', '').strip()
+                        room      = r.get('GYOSI_NAME', '').strip()
+                        ctype     = r.get('HYUNGTAE', '').strip()
+                        time_slot = r.get(_time_field, '').strip() if _time_field else ''
+                        g_year    = r.get('GAESUL_YEAR', '').strip()
+                        g_term    = r.get('GAESUL_TERM', '').strip()
+
+                        if not course:
+                            row_idx += 1
+                            continue
+                        if re.search(r'i[-\s]?campus', ctype, re.IGNORECASE):
+                            row_idx += 1
+                            continue
+
+                        if haksu_no in enroll_cache:
+                            enrollment, gaesul = enroll_cache[haksu_no]
+                            print(f"    [{row_idx}] {course}: 수강인원={enrollment} (캐시)")
+                        else:
+                            print(f"    [{row_idx}] {course} 더블클릭 중...", flush=True)
+                            try:
+                                flush_xhr(driver)
+                                clicked = dbl_click_course(driver, course, row_idx)
+                                if clicked:
+                                    time.sleep(2)
+                                    enrollment, gaesul = enrollment_from_popup(driver, expected_course=course, gaesul_year=g_year, gaesul_term=g_term)
+                                    print(f"         팝업 닫는 중...", flush=True)
+                                    close_popup(driver)
+                                    delay()
+                                else:
+                                    print(f"    [SKIP] row={row_idx}: {course}")
+                                    enrollment, gaesul = 0, 0
+                            except Exception as e:
+                                print(f"    [ERROR] row={row_idx}: {course} — {e.__class__.__name__}")
+                                try:
+                                    close_popup(driver)
+                                except Exception:
+                                    pass
+                                enrollment, gaesul = 0, 0
+                            enroll_cache[haksu_no] = (enrollment, gaesul)
+                            print(f"    [{row_idx}] {course}: 수강인원={enrollment}, 개설강좌수={gaesul}")
+                        row = {
+                            '학년도학기': semester,
+                            '교과목명': course,
+                            '수업시간대': time_slot,
+                            '수업요일및강의실': room,
+                            '수업형태': ctype,
+                            'building': parse_building(room),
+                            '수강인원': enrollment,
+                            '개설강좌수': gaesul,
+                        }
+                        all_rows.append(row)
+                        sem_rows.append(row)
+                        row_idx += 1
+
+                    # 학기별 즉시 저장 (중간 크래시 대비)
+                    if sem_rows:
+                        _save_semester(sem_rows, semester, dept)
 
     finally:
         driver.quit()
@@ -670,18 +786,7 @@ def crawl():
         print("[ERROR] 수집된 데이터 없음")
         return
 
-    cols = ['학년도학기', '교과목명', '수업시간대', '수업요일및강의실', '수업형태', 'building', '수강인원', '개설강좌수']
-    df = pd.DataFrame(all_rows)[cols]
-
-    # CSV 저장 (파일이 열려있으면 _new 이름으로 저장)
-    for fname in ['sugang_full.csv', 'sugang_full_new.csv']:
-        try:
-            df.to_csv(fname, index=False, encoding='utf-8-sig')
-            print(f"\n총 {len(df)}개 강의 → {fname} 저장 완료")
-            break
-        except PermissionError:
-            print(f"  [WARN] {fname} 저장 실패 (파일 사용 중). 다른 이름 시도...")
-    print(df.head(10).to_string())
+    print(f"\n전체 {len(all_rows)}개 강의 수집 완료 (학기별 crawl/ 폴더에 저장됨)")
 
 
 if __name__ == '__main__':

@@ -41,17 +41,20 @@ for i, (idx, row) in enumerate(gdf_proj.iterrows()):
 print(f"변환된 건물 폴리곤 개수: {len(BUILDING_POLY)}")
 print("샘플:", list(BUILDING_POLY.items())[0])
 
+campus_slug = place.split(",")[0].strip().lower().replace(" ", "_")
+
 img = Image.new('L', (W, H), 0)
 draw = ImageDraw.Draw(img)
 for pts in BUILDING_POLY.values():
     draw.polygon(pts, fill=255)
-out_path = os.path.join(IMG_DIR, "korea_univ_building_mask.png")
+out_path = os.path.join(IMG_DIR, f"{campus_slug}_building_mask.png")
 img.save(out_path)
 print("저장:", out_path)
 
-with open(os.path.join(TXT_DIR, "korea_univ_building_places.txt"), "w", encoding="utf-8") as f:
+txt_name = f"{campus_slug}_building_places.txt"
+with open(os.path.join(TXT_DIR, txt_name), "w", encoding="utf-8") as f:
     f.write("BUILDING_POLY = {\n")
     for k, pts in BUILDING_POLY.items():
         f.write(f"    '{k}': {pts},\n")
     f.write("}\n")
-print("저장: korea_univ_building_places.txt (기존 building_places.txt와 동일 포맷)")
+print(f"저장: {txt_name} (기존 building_places.txt와 동일 포맷)")

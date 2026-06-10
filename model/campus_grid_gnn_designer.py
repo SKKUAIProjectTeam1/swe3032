@@ -16,13 +16,13 @@ import os
 import sys
 from scipy.ndimage import distance_transform_edt
 
+sys.stdout.reconfigure(encoding='utf-8')
+
 # 데이터 로드
 sys.path.append(os.getcwd())
-try:
-    from building_places import BUILDING_POLY
-except ImportError:
-    with open('building_places.txt', 'r') as f:
-        exec(f.read(), globals())
+data_path = sys.argv[1] if len(sys.argv) > 1 else 'building_places.txt'
+with open(data_path, 'r', encoding='utf-8') as f:
+    exec(f.read(), globals())
 
 # ── 설정 ──────────────────────────────────────────────────────────────────
 W, H = 2223, 2056
@@ -195,7 +195,8 @@ def plot_v21():
     plt.axis('off')
     ax.set_xlim(0, W); ax.set_ylim(H, 0)
     
-    out_path = 'campus_v21_smart_gate_design.png'
+    campus_name = os.path.basename(data_path).replace('_building_places.txt', '').replace('.txt', '')
+    out_path = f'output/size_test/campus_v21_{campus_name}.png'
     plt.savefig(out_path, dpi=200, bbox_inches='tight', facecolor='#050505')
     plt.close()
     print(f"\n✅ V21 최종 도로 설계 완료: {out_path}")

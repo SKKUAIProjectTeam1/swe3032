@@ -246,7 +246,7 @@ def loss_fn(ew: torch.Tensor, gs: torch.Tensor, c: dict, scale: float) -> torch.
     strength = torch.zeros(N, device=DEVICE)
     strength.scatter_add_(0, src, ew)
     strength.scatter_add_(0, dst, ew)
-    conn = F.relu(2. - strength[bnds]).pow(2).sum() * (scale * 25. + 1.)
+    conn = F.relu(2. - strength[bnds]).pow(2).mean() * (scale * 25. + 1.)
 
     # 4. Sparsity: 총 도로량 억제 (가느다란 길 유도)
     sparse = ew.mean() * 15.

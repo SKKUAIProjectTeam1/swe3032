@@ -162,17 +162,25 @@ def _auto_gt_edge_mask(is_bld: np.ndarray, building_nodes: list[int]) -> torch.T
 
     dmat, pred = dijkstra(graph, indices=reps, return_predecessors=True, unweighted=True)
 
+    # 군집 쌍별 최단경로를 1칸 팽창(dilation) 후 누적: 8-연결 균일 비용
+    # dijkstra의 동률 경로 tie-break로 인해 기하학적으로 같은 corridor를
+    # 지나는 경로들도 정확히 같은 칸을 고르지 않는 경우가 많아, 팽창으로
+    # 인접한 경로들을 하나의 corridor로 합쳐준다.
     cell_count = np.zeros(N, dtype=np.int32)
     for i, r in enumerate(reps):
         for j in range(i + 1, len(reps)):
             node = reps[j]
+            path_mask = np.zeros(N, dtype=bool)
             while node != r and node >= 0:
-                cell_count[node] += 1
+                path_mask[node] = True
                 node = pred[i, node]
+            path_mask[r] = True
+            dilated = binary_dilation(path_mask.reshape(RES, RES), iterations=1)
+            cell_count += dilated.flatten().astype(np.int32)
 
     # 여러 군집 쌍의 경로가 공유(>= 임계)하는 칸 = 간선 corridor
     num_pairs = len(reps) * (len(reps) - 1) // 2
-    thr = max(1, num_pairs // 4)
+    thr = max(1, num_pairs // 8)
     gt_road = (cell_count >= thr) & free
 
     mask = gt_road[src_all] & gt_road[dst_all]
@@ -590,7 +598,7 @@ def plot_campus(model: MultiCampusRoadGAT, c: dict, out_path: str):
     ax.set_ylim(RES, 0)
     ax.axis('off')
     title = c['name'].replace('_', ' ').title()
-    ax.set_title(f'Multi-Campus GAT V23  ·  {title}',
+    ax.set_title(f'RWS_V5  ·  Multi-Campus GAT V23  ·  {title}',
                  color='white', fontsize=13, pad=10)
     plt.tight_layout()
     plt.savefig(out_path, dpi=150, bbox_inches='tight', facecolor='#0d1117')

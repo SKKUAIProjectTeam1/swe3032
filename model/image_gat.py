@@ -215,6 +215,8 @@ class CampusGAT(nn.Module):
         for m in self.modules():
             if isinstance(m, nn.Linear) and m.bias is not None:
                 nn.init.zeros_(m.bias)
+        # sparse 초기화: sigmoid(-2) ≈ 0.12 → 초기 ridge_loss 최소화
+        nn.init.constant_(self.edge_head[-1].bias, -2.0)
 
     def forward(self, feats: torch.Tensor, ei: torch.Tensor, bld_mask: torch.Tensor):
         h1  = self.gat1(feats, ei)
@@ -229,77 +231,62 @@ class CampusGAT(nn.Module):
 
 # ── [Option B] 그래프 확산 연결성 손실 ────────────────────────────────────────
 def diffusion_conn_loss(
-    ew:            torch.Tensor,   # (E,)  엣지 가중치
-    building_nodes: torch.Tensor,  # (B,)  건물 인접 노드 인덱스
-    ei:            torch.Tensor,   # (2,E)
-    T:             int = DIFF_STEPS,
-    weight:        float = 30.0,
+    ew:             torch.Tensor,  # (E,)
+    building_nodes: torch.Tensor,  # (B,)
+    ei:             torch.Tensor,  # (2,E)
+    T:              int   = DIFF_STEPS,
+    weight:         float = 1.0,
 ) -> torch.Tensor:
     """
     각 건물 인접 노드에서 신호를 발사해 T번 전파.
-    다른 건물 노드에 신호가 도달하지 않으면 패널티.
-
-    신호 업데이트:
-      msg[dst] += norm_ew * signals[src]
-      signals  = clamp(signals + msg, 0, 1)
-
-    norm_ew: source degree로 row-normalize → 신호가 발산하지 않도록
+    - row-normalize 제거: 신호 소멸 문제 해결
+    - steep sigmoid: 신호가 임계값(0.3) 넘으면 1로 스냅 → 장거리 전파 가능
     """
     src, dst = ei[0], ei[1]
     n_bld    = building_nodes.size(0)
     if n_bld <= 1:
         return ew.sum() * 0.
 
-    # source degree로 엣지 정규화
-    deg     = torch.zeros(N, device=DEVICE).scatter_add_(0, src, ew)
-    norm_ew = ew / (deg[src] + 1e-8)                        # (E,)
-
-    # 초기 신호: 각 건물 인접 노드에서 1 출발
     signals = torch.zeros(N, n_bld, device=DEVICE)
     signals[building_nodes, torch.arange(n_bld, device=DEVICE)] = 1.0
 
-    # T 스텝 확산
     for _ in range(T):
         msg = torch.zeros(N, n_bld, device=DEVICE)
         msg.scatter_add_(
             0,
             dst.unsqueeze(1).expand(-1, n_bld),
-            norm_ew.unsqueeze(1) * signals[src]              # (E, n_bld)
+            ew.unsqueeze(1) * signals[src]
         )
-        signals = torch.clamp(signals + msg, 0., 1.)
+        # steep sigmoid: 0.3 초과하면 빠르게 1로 수렴 → 소멸 없이 장거리 전파
+        signals = torch.sigmoid(10. * (signals + msg - 0.3))
 
-    # 각 건물 쌍 간 수신량: (n_bld, n_bld)
-    received = signals[building_nodes]
+    received = signals[building_nodes]                        # (n_bld, n_bld)
     off_diag = 1. - torch.eye(n_bld, device=DEVICE)
-    loss     = F.relu(1. - received) * off_diag              # 미도달 패널티
-
-    return loss.sum() * weight
+    return F.relu(1. - received).mul(off_diag).sum() * weight
 
 
 # ── 손실 함수 ─────────────────────────────────────────────────────────────────
 def loss_fn(ew: torch.Tensor, gs: torch.Tensor, c: dict, scale: float) -> torch.Tensor:
     src, dst = EDGE_INDEX[0], EDGE_INDEX[1]
-    ridge    = c['ridge']
-    bnds     = c['building_nodes']
+    rs = (c['ridge'][src] + c['ridge'][dst]) * 0.5
 
-    # Ridge: 건물 사이 통로를 따라 유도
-    rs         = (ridge[src] + ridge[dst]) * 0.5
-    ridge_loss = (ew * (1. - rs)).sum() * (scale * 8. + 0.3)
+    # Ridge: sum→mean 으로 스케일 정상화 (기존 대비 ~80,000배 감소)
+    ridge_loss = (ew * (1. - rs)).mean() * (scale * 3. + 0.1)
 
-    # [Option B] 확산 연결성: 건물 간 실제 경로 존재 강제
-    conn = diffusion_conn_loss(ew, bnds, EDGE_INDEX, T=DIFF_STEPS,
-                               weight=scale * 25. + 1.)
+    # Connectivity: 확산 (sigmoid 전파로 장거리 동작)
+    conn = diffusion_conn_loss(ew, c['building_nodes'], EDGE_INDEX,
+                               T=DIFF_STEPS, weight=scale * 20. + 1.)
 
-    # Sparsity: 총 도로량 억제
-    sparse = ew.mean() * 15.
+    # Sparsity
+    sparse = ew.mean() * 3.
 
-    # Degree: 과도한 교차점 억제
+    # Degree: sum→mean (N=10,000으로 나눔)
     strength = torch.zeros(N, device=DEVICE)
     strength.scatter_add_(0, src, ew)
     strength.scatter_add_(0, dst, ew)
-    degree = F.relu(strength - 4.).sum() * 3.
+    degree = F.relu(strength - 4.).mean() * 300.
 
-    # Gate: 정확히 N_GATES개 활성화
+    # Gate
     gate = (gs.sum() - N_GATES).pow(2) * 300.
 
     return ridge_loss + conn + sparse + degree + gate

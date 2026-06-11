@@ -156,13 +156,18 @@ def _get_utm_transform(place):
     return utm_crs, minx, miny, maxx, maxy, scale, offx, offy
 
 
-def _rasterize_roads(place, utm_crs, minx, miny, maxx, maxy, scale, offx, offy):
-    """OSM 도로를 W×H 이미지에 래스터화. tier에 따라 밝기 다름."""
+def _rasterize_roads(place, utm_crs, minx, miny, maxx, maxy):
+    """OSM 도로를 RES×RES 그리드에 직접 래스터화.
+    W×H로 그린 뒤 축소하면 가는 선이 사라지므로, 처음부터 100×100에 그림."""
+    scale_r = min(RES / (maxx - minx), RES / (maxy - miny)) * MARGIN
+    offx_r  = (RES - (maxx - minx) * scale_r) / 2
+    offy_r  = (RES - (maxy - miny) * scale_r) / 2
+
     G = ox.graph_from_place(place, network_type='all', retain_all=True)
     edges = ox.graph_to_gdfs(G, nodes=False)
     edges_proj = edges.to_crs(utm_crs)
 
-    road_img = Image.new('L', (W, H), 0)
+    road_img = Image.new('L', (RES, RES), 0)
     draw = ImageDraw.Draw(road_img)
     n_drawn = 0
 
@@ -179,12 +184,12 @@ def _rasterize_roads(place, utm_crs, minx, miny, maxx, maxy, scale, offx, offy):
 
         pts = []
         for x, y in coords:
-            px = int((x - minx) * scale + offx)
-            py = int((maxy - y) * scale + offy)
+            px = (x - minx) * scale_r + offx_r
+            py = (maxy - y) * scale_r + offy_r
             pts.append((px, py))
 
         brightness = 85 + tier * 56  # tier1=141, tier2=197, tier3=253
-        lw = tier + 1                 # tier1=2px, tier2=3px, tier3=4px
+        lw = tier + 1                 # tier1=2px, tier2=3px, tier3=4px (100×100 기준 충분)
         for i in range(len(pts) - 1):
             draw.line([pts[i], pts[i+1]], fill=brightness, width=lw)
         n_drawn += 1
@@ -206,8 +211,8 @@ def process(place, slug):
     print(f"  ▶ {slug} ({place})")
     try:
         utm_crs, minx, miny, maxx, maxy, scale, offx, offy = _get_utm_transform(place)
-        road_img, n = _rasterize_roads(place, utm_crs, minx, miny, maxx, maxy, scale, offx, offy)
-        road_100 = np.array(road_img.resize((RES, RES), resample=Image.BILINEAR), dtype=np.float32) / 255.0
+        road_img, n = _rasterize_roads(place, utm_crs, minx, miny, maxx, maxy)
+        road_100 = np.array(road_img, dtype=np.float32) / 255.0
         np.save(out_path, road_100)
         print(f"  ✓ {slug}  (도로 {n}개, GT pixels={int((road_100 > 0.1).sum())})")
         return True

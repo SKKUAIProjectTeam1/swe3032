@@ -109,9 +109,18 @@ def load_campus(img_path: str, txt_path: str) -> dict:
     dist  = distance_transform_edt(1 - is_bld)
     ridge = ((dist > 1.5) & (dist < 7.0)).astype(np.float32)
 
-    # 노드 피처 4채널: [is_building, ridge, x_norm, y_norm]
-    xs = np.tile(np.arange(RES),          RES).astype(np.float32) / RES
-    ys = np.repeat(np.arange(RES), RES       ).astype(np.float32) / RES
+    # 좌표 피처: 캔버스 절대좌표 대신 건물 군집 bounding box 기준 상대좌표
+    # (절대좌표를 쓰면 "캠퍼스 내 건물 사이"가 아니라 "캔버스 좌상단 근처"라는
+    #  데이터셋 전역의 위치 단서로 학습이 쏠리는 문제가 있었음)
+    bld_ys, bld_xs = np.where(is_bld > 0)
+    x_min, x_max = bld_xs.min(), bld_xs.max()
+    y_min, y_max = bld_ys.min(), bld_ys.max()
+    x_span = max(x_max - x_min, 1)
+    y_span = max(y_max - y_min, 1)
+
+    # 노드 피처 4채널: [is_building, ridge, x_rel, y_rel]
+    xs = (np.tile(np.arange(RES),          RES).astype(np.float32) - x_min) / x_span
+    ys = (np.repeat(np.arange(RES), RES       ).astype(np.float32) - y_min) / y_span
     node_feats = np.stack(
         [is_bld.flatten(), ridge.flatten(), xs, ys], axis=1
     ).astype(np.float32)                                   # (N, 4)

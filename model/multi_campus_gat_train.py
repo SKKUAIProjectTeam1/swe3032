@@ -610,7 +610,7 @@ def visualize_all(model: MultiCampusRoadGAT, campuses: list[dict], out_dir: str 
     print(f'\n▶ {len(campuses)}개 캠퍼스 시각화 → {out_dir}')
     os.makedirs(out_dir, exist_ok=True)
     for c in campuses:
-        plot_campus(model, c, os.path.join(out_dir, f'road_{c["name"]}.png'))
+        plot_campus(model, c, os.path.join(out_dir, f'RWS_V5_road_{c["name"]}.png'))
 
 
 # ── 메인 ─────────────────────────────────────────────────────────────────────
@@ -647,6 +647,6 @@ if __name__ == '__main__':
             print('  사용 가능:', [c['name'] for c in campuses])
         else:
             plot_campus(model, hits[0],
-                        os.path.join(OUT_DIR, f'road_{hits[0]["name"]}.png'))
+                        os.path.join(OUT_DIR, f'RWS_V5_road_{hits[0]["name"]}.png'))
     else:
         visualize_all(model, test_campuses, out_dir=os.path.join(OUT_DIR, 'gat_test'))

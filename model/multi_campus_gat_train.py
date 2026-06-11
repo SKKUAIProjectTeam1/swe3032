@@ -27,7 +27,8 @@ import matplotlib.patches as mpatches
 from PIL import Image
 from scipy.ndimage import distance_transform_edt
 
-sys.stdout.reconfigure(encoding='utf-8')
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
 
 # ── 설정 ─────────────────────────────────────────────────────────────────────
 RES           = 100          # 격자 해상도 (RES × RES 노드)

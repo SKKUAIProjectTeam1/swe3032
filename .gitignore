@@ -1,6 +1,5 @@
 .env
-__pycache__
+__pycache__/
+*.pyc
 .claude
 cache/
-output/*.png
-output/*.pth

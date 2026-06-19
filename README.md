@@ -47,7 +47,7 @@
 
 단순히 "정답 도로 지도"가 있는 게 아니라, **여러 알고리즘의 합의 결과**를 정답으로 사용한다.
 
-```
+```text
 4개 진입 방향(게이트) × 4가지 비용함수(Dijkstra 3종 + A*) = 16가지 경로 후보
   ↓
 합의 기준(c4/c8/c12: 4·8·12개 이상 동의)으로 3가지 마스크 생성
@@ -88,7 +88,7 @@
 | `L_conn` | 모든 터미널(게이트+건물군)이 도로망에 연결되도록 강제. warm-up: 0.05→0.5 | warm-up |
 | `L_sparse` | 과도한 도로 예측 억제 | 0.03 |
 
-```
+```text
 L = L_BCE + 0.8·L_Dice + (0.2+0.8s)·L_FP + (0.05+0.45s)·L_conn + 0.03·L_sparse
     (s: warm-up 진행도 0→1, 20 epoch 동안)
 ```
@@ -120,13 +120,13 @@ L = L_BCE + 0.8·L_Dice + (0.2+0.8s)·L_FP + (0.05+0.45s)·L_conn + 0.03·L_spar
 | `train_v28_subgraph_mlp.ipynb` | MLP 비교군 |
 | `train_v28_subgraph_sage.ipynb` | SAGE 비교군 |
 
-각 노트북 상단에서 Google Drive 연동 후 실행. 학습 완료 시 체크포인트가 `v28a/`, `v28_mlp/`, `v28a_sage/`에 저장됨.
+각 노트북 상단에서 Google Drive 연동 후 실행. 학습 완료 시 체크포인트가 `v28_final/checkpoints/` 하위에 저장됨.
 
 ### 평가 — 6-모델 비교 (로컬)
 
 ```bash
 # swe3032/ 디렉토리에서 실행
-python connectivity_eval.py
+python scripts/connectivity_eval.py
 ```
 
 Connectivity Rate + Edge Density를 6가지 모델 전체(Trivial/MST/Ridge-only/SAGE/MLP/V28a)에 대해 일괄 계산. GT가 없는 Test 캠퍼스도 평가에 포함됨.
@@ -134,8 +134,7 @@ Connectivity Rate + Edge Density를 6가지 모델 전체(Trivial/MST/Ridge-only
 ### GT 사전 계산
 
 ```bash
-# 16-vote GT 마스크 생성 (49개 OSM 캠퍼스)
-python precompute_gt.py
+python scripts/precompute_gt.py
 ```
 
 ---
@@ -144,27 +143,42 @@ python precompute_gt.py
 
 ```text
 swe3032/
-├── train_v28_subgraph_gnn.ipynb   ← 최종 모델(GAT) 학습
-├── train_v28_subgraph_mlp.ipynb   ← MLP 비교군 학습
-├── train_v28_subgraph_sage.ipynb  ← SAGE 비교군 학습
-├── connectivity_eval.py           ← 6-모델 Connectivity/Density 평가
-├── baseline_eval.py               ← Trivial/MST/Ridge-only 평가
-├── precompute_gt.py               ← 16-vote GT 마스크 사전 계산
+├── train_v28_subgraph_gnn.ipynb    ← 최종 모델(GAT) 학습
+├── train_v28_subgraph_mlp.ipynb    ← MLP 비교군 학습
+├── train_v28_subgraph_sage.ipynb   ← SAGE 비교군 학습
+├── save_to_drive.ipynb
+├── README.md / CONTEXT.md
 │
-├── collegemap/
-│   ├── images/                    # 캠퍼스 건물 마스크 이미지 (49개)
-│   ├── txt/                       # 건물 폴리곤 좌표 (49개)
-│   ├── gt_masks_final/            # 최종 GT 마스크 (49개, *_gt.npz)
-│   └── osm_campus_converter.py    # OSM → 건물 폴리곤 변환 스크립트
+├── scripts/                        ← 평가·전처리 스크립트
+│   ├── connectivity_eval.py        # 6-모델 Connectivity/Density 평가
+│   ├── baseline_eval.py            # Trivial/MST/Ridge-only 평가
+│   ├── precompute_gt.py            # 16-vote GT 마스크 사전 계산
+│   └── precompute_gt_*.py          # GT 변형 실험용
 │
-├── v28a/                          # GAT 체크포인트 (epoch 220)
-├── v28_mlp/                       # MLP 체크포인트 (epoch 220)
-├── v28a_sage/                     # SAGE 체크포인트 (epoch 220)
+├── v28_final/                      ← 최종 모델 결과물
+│   ├── checkpoints/
+│   │   ├── gat/                    # GAT 체크포인트 (best + ep050~ep220)
+│   │   ├── mlp/                    # MLP 체크포인트
+│   │   └── sage/                   # SAGE 체크포인트
+│   └── results/
+│       ├── gat_v28/                # V28 GAT 예측 결과 이미지
+│       ├── gat_v28a/               # V28a GAT 예측 결과 이미지
+│       ├── mlp/                    # MLP 예측 결과 이미지
+│       └── sage/                   # SAGE 예측 결과 이미지
 │
-├── old_notebooks/                 # 이전 버전 학습 노트북 (V22~V27, 참고용)
-├── model/                         # 단일 캠퍼스 실험 스크립트 (V1~V21, 참고용)
-├── CONTEXT.md                     # 코드 상세 구조 문서
-└── docs/                          # 기타 문서
+├── collegemap/                     ← 데이터셋
+│   ├── images/                     # 캠퍼스 건물 마스크 이미지 (49개)
+│   ├── txt/                        # 건물 폴리곤 좌표 (49개)
+│   ├── gt_masks_final/             # 최종 GT 마스크 (*_gt.npz, 42개)
+│   └── osm_campus_converter.py     # OSM → 건물 폴리곤 변환
+│
+├── docs/                           ← 개발 기록 문서
+│
+├── archive/
+│   ├── v01-v21_single_campus/      ← 단일 캠퍼스 직접 최적화 시대
+│   └── v22-v27_multicampus/        ← 멀티캠퍼스 GAT 실험 시대
+│
+└── legacy/oldversion/              ← 이전 프로젝트 (혼잡도 예측)
 ```
 
 ---
@@ -173,7 +187,7 @@ swe3032/
 
 | 버전대 | 시도 | 핵심 문제 |
 |--------|------|-----------|
-| V1~V16 | 단일 캠퍼스 직접 최적화 | 분절된 도로 구간, 다른 캠퍼스로 일반화 불가 |
+| V1~V21 | 단일 캠퍼스 직접 최적화 | 분절된 도로 구간, 다른 캠퍼스로 일반화 불가 |
 | V22~V27 | 멀티캠퍼스 GAT + ridge GT | "지렁이" 형태 우회 도로, GT edge 비율 0.025%로 학습 정체 |
 | **V28a** | **non-building subgraph + 16-vote GT** | GT edge 비율 0.5%로 20배 개선, 연결성 보장 |
 

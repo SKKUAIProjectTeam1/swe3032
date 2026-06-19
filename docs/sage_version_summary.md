@@ -1,21 +1,21 @@
-# train_v28_subgraph_sage.ipynb 변환 요약
+# GraphSAGE 비교군 구현 노트 (train_v28_subgraph_sage.ipynb)
 
-[train_v28_subgraph_gnn.ipynb](file:///home/sean429/swe3032/train_v28_subgraph_gnn.ipynb) 파일을 기반으로 GraphSAGE 아키텍처를 적용한 [train_v28_subgraph_sage.ipynb](file:///home/sean429/swe3032/train_v28_subgraph_sage.ipynb) 노트북을 생성했습니다.
+GAT/MLP와의 비교를 위해 `train_v28_subgraph_gnn.ipynb`를 베이스로 GraphSAGE 버전을 별도 구현했다.
 
-## 주요 변경 사항
+## 변경 내용
 
-### 1. GraphSAGE 아키텍처 도입 (`SAGEConv` 및 `SubgraphSAGE`)
-- 기존의 Graph Attention Network (`MHGATLayer`)를 제거하고, Mean Aggregation 방식의 GraphSAGE 레이어인 [SAGEConv](file:///home/sean429/swe3032/train_v28_subgraph_sage.ipynb)를 구현했습니다.
-- **SAGEConv 구현 특징**:
-  - 인접 노드(`dst`)의 메시지를 수집한 후 `degree`로 나누어 평균값(mean)으로 집계합니다.
-  - 타깃 노드 자신의 피처와 집계된 이웃 피처를 `torch.cat`을 통해 병합(concatenation)하여 Linear projection 및 비선형 활성화 함수(ELU), LayerNorm, Dropout을 적용합니다.
-  - 외부 라이브러리(PyG 등) 의존성 없이 순수 PyTorch로 구현하여 기존 학습 파이프라인과의 호환성을 유지했습니다.
-- GraphSAGE 합성곱 레이어를 3층으로 쌓은 [SubgraphSAGE](file:///home/sean429/swe3032/train_v28_subgraph_sage.ipynb) 모델을 인스턴스화하여 학습에 적용했습니다.
+**아키텍처 교체**
+- `MHGATLayer` 제거, `SAGEConv` (Mean Aggregation) + `SubgraphSAGE`로 대체
+- PyG 등 외부 라이브러리 없이 순수 PyTorch로 직접 구현해 기존 파이프라인과 호환 유지
+- SAGEConv 동작: 이웃 노드 피처를 degree로 나눠 평균 집계 → 자기 피처와 concat → Linear + ELU + LayerNorm + Dropout
+- 3층으로 쌓아 `SubgraphSAGE` 구성, 파라미터 수 ~55k
 
-### 2. 코드 및 파일 정보 업데이트
-- 코드 내 `CODE_VERSION`을 `'v28a_subgraph_gnn'`에서 `'v28a_subgraph_sage'`로 수정.
-- 학습 시 출력되는 체크포인트 및 시각화 파일명이 GraphSAGE 버전에 맞게 매칭되도록 업데이트.
-- 에러 발생 방지 및 파일 크기 관리를 위해 셀 실행 결과(Output) 데이터를 초기화하여 가볍고 깔끔한 노트북 파일 형태로 저장.
+**공통 유지 항목**
+- 데이터 로딩·전처리·증강 파이프라인 동일
+- 손실 함수(BCE + Dice + FP + Connectivity + Sparse) 동일
+- 학습 설정(AdamW, CosineAnnealing, 220 epoch, AMP) 동일
+- `CODE_VERSION = 'v28a_subgraph_sage'`으로 체크포인트 파일명 분리
 
-## 검증 결과
-- 생성된 코드를 1 epoch 동안 간략하게 사전 테스트한 결과, 데이터 로딩, forward pass, loss 연산, backpropagation 및 체크포인트 저장이 오류 없이 원활하게 작동함을 확인했습니다.
+## 목적
+
+Attention 기반(GAT)과 단순 평균 집계(SAGE) 중 캠퍼스 도로망 패턴 학습에 더 적합한 구조가 무엇인지 비교하기 위한 모델이다.

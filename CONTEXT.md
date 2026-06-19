@@ -165,11 +165,3 @@ terminals = `gate_nodes` (경계 진입점 2개) + `cluster_nodes` (건물군 �
 | v28 | non-building subgraph로 imbalance 해결 — single-linkage 클러스터 체인 문제 |
 | v28a | **현재** — ball clustering, direction feature, flip aug, connectivity loss |
 
----
-
-## Claude에게 효율적으로 요청하는 법 (이 프로젝트에서 확인된 사항)
-
-1. **"하지 말아야 할 것"을 명시적으로** — "OSM 없으면 GT 생성 함수 호출하지 마"처럼 금지 규칙을 직접 말해야 함. 기존 코드의 암묵적 제약은 잘 못 읽음.
-2. **코드 전에 계획 먼저** — "어떻게 구현할 거야?" 물어보면 거기서 잡힘.
-3. **"뭘 제거했어?" 체크** — 큰 파일 재작성 시 불필요한 패턴을 조용히 살려두는 경향 있음.
-4. **통째로 재작성보다 타깃 수정** — 짧은 블록 단위 수정이 실수 적음.
